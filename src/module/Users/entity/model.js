@@ -15,6 +15,31 @@ const userSchema = mongoose.Schema(
       required: true,
       trim: true,
     },
+    industry: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    companyName: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    companySize: {
+      type: Number,
+      required: true,
+      trim: true,
+    },
+    webURL: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    jobTitle: {
+      type: String,
+      required: true,
+      trim: true,
+    },
     email: {
       type: String,
       required: true,

@@ -3,19 +3,17 @@ const controller = require('./controller');
 const validation = require('./validation');
 const validate = require('../../middlewares/validate');
 const auth = require('../../middlewares/auth');
-const fileUpload = require('../../utils/fileUpload');
 
 const router = express.Router();
 
-router
-  .route('/')
-  .post(auth(), fileUpload.single('pdfPath'), controller.create)
-  .get(file, controller.query);
+router.post('/', auth(), validate(validation.create), controller.create);
+
+router.get('/:id', auth(), validate(validation.getCard), controller.get);
 
 router
-  .route('/:id')
-  .get(auth(), controller.get)
-  .patch(auth(), controller.update);
+  .route('/logged/user')
+  .get(auth(), controller.getCardLoggedUser)
+  .delete(auth(), controller.deleteCard);
 module.exports = {
-  chatRoutes: router,
+  creditCardRoutes: router,
 };
