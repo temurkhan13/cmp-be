@@ -20,6 +20,7 @@ const envVarsSchema = Joi.object()
     JWT_REFRESH_EXPIRATION_DAYS: Joi.number()
       .default(30)
       .description('days after which refresh tokens expire'),
+    STRIPE_KEY: Joi.string().required().description('Stripe key is required'),
   })
   .unknown();
 
@@ -53,4 +54,8 @@ module.exports = {
     resetPasswordExpirationMinutes: 10,
   },
   baseUrl: envVars.BASE_URL,
+  stripe: {
+    key: envVars.STRIPE_KEY,
+    // webhook: envVars.STRIPE_WEBHOOK_SECRET,
+  },
 };
