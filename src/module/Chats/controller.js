@@ -12,11 +12,13 @@ const create = catchAsync(async (req, res) => {
   const chat = await service.create(body);
   res.status(httpStatus.OK).send(chat);
 });
+
 const changeTone = catchAsync(async (req, res) => {
   const { body } = req;
   const changeTone = await service.changeTone(body);
   res.status(httpStatus.OK).send(changeTone);
 });
+
 const translate = catchAsync(async (req, res) => {
   const { body } = req;
   const translate = await service.translate(body);
