@@ -7,37 +7,30 @@ const userSchema = mongoose.Schema(
   {
     firstName: {
       type: String,
-      required: true,
       trim: true,
     },
     lastName: {
       type: String,
-      required: true,
       trim: true,
     },
     industry: {
       type: String,
-      required: true,
       trim: true,
     },
     companyName: {
       type: String,
-      required: true,
       trim: true,
     },
     companySize: {
       type: Number,
-      required: true,
       trim: true,
     },
     webURL: {
       type: String,
-      required: true,
       trim: true,
     },
     jobTitle: {
       type: String,
-      required: true,
       trim: true,
     },
     email: {
@@ -72,7 +65,6 @@ const userSchema = mongoose.Schema(
     },
     userName: {
       type: String,
-      required: true,
       trim: true,
     },
     photoPath: {
