@@ -30,9 +30,20 @@ const create = async (body) => {
     const gptResponse = await axios.post(`${config.baseUrl}/chat`, body);
     console.log('gptResponse', gptResponse);
   }
-  return;
+  return chat;
+};
+
+const changeTone = async (body) => {
+  const gptResponse = await axios.post(`${config.baseUrl}/change-tone`, body);
+  return gptResponse;
+};
+const translate = async (body) => {
+  const gptResponse = await axios.post(`${config.baseUrl}/translate`, body);
+  return gptResponse;
 };
 
 module.exports = {
   create,
+  changeTone,
+  translate,
 };

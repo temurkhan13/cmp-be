@@ -3,19 +3,16 @@ const controller = require('./controller');
 const validation = require('./validation');
 const validate = require('../../middlewares/validate');
 const auth = require('../../middlewares/auth');
-const fileUpload = require('../../utils/fileUpload');
+const { fileUpload } = require('../../utils/fileUpload');
 
 const router = express.Router();
 
 router
   .route('/')
   .post(auth(), fileUpload.single('pdfPath'), controller.create)
-  .get(file, controller.query);
+  .post(auth(), controller.changeTone)
+  .post(auth(), controller.translate);
 
-router
-  .route('/:id')
-  .get(auth(), controller.get)
-  .patch(auth(), controller.update);
 module.exports = {
   chatRoutes: router,
 };

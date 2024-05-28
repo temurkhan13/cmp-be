@@ -5,7 +5,7 @@ const { toJSON, paginate } = require('../../../utils/plugins');
 // Message Schema
 const messageSchema = mongoose.Schema({
   text: { type: String, required: true },
-  sender: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+  sender: { type: mongoose.Types.ObjectId, ref: 'User', required: true },
   timestamp: { type: Date, default: Date.now },
   pdfPath: {
     type: String,
