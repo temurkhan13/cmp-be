@@ -4,7 +4,7 @@ const { tokenTypes } = require('../../config/tokens');
 const User = require('./entity/model');
 const Token = require('../tokens/entity/model');
 const register = async (body) => {
-  if (User.isEmailTaken(body.email)) {
+  if (await User.isEmailTaken(body.email)) {
     throw new ApiError(httpStatus.BAD_REQUEST, 'User already exists');
   }
   return await User.create(body);
