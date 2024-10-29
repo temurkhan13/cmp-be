@@ -68,6 +68,17 @@ router
 	.delete(auth(), controller.deleteComment);
 
 router.post(
+	"/:workspaceId/folder/:folderId/chat/:chatId/message/:messageId/toggle-like",
+	auth(),
+	controller.toggleMessageLike,
+);
+router.post(
+	"/:workspaceId/folder/:folderId/chat/:chatId/message/:messageId/toggle-dislike",
+	auth(),
+	controller.toggleMessageDislike,
+);
+
+router.post(
 	"/:workspaceId/folder/:folderId/:contextType/:contextId/message/:messageId/bookmark",
 	auth(),
 	controller.bookmarkMessage,

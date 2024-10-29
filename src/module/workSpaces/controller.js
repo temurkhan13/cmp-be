@@ -504,6 +504,18 @@ const getFolderEntities = catchAsync(async (req, res) => {
 	const entities = await service.getFolderEntities(workspaceId, folderId);
 	res.status(httpStatus.OK).send(entities);
 });
+const toggleMessageLike = catchAsync(async (req, res) => {
+	const { workspaceId, folderId, chatId, messageId } = req.params;
+	const { user } = req;
+	const like = await service.toggleMessageLike(workspaceId, folderId, chatId, messageId, user._id);
+	res.status(httpStatus.OK).send(like);
+});
+const toggleMessageDislike = catchAsync(async (req, res) => {
+	const { workspaceId, folderId, chatId, messageId } = req.params;
+	const { user } = req;
+	const dislike = await service.toggleMessageDislike(workspaceId, folderId, chatId, messageId, user._id);
+	res.status(httpStatus.OK).send(dislike);
+});
 
 module.exports = {
 	create,
@@ -575,4 +587,6 @@ module.exports = {
 	uploadEntityImage,
 	getUserDashboardStats,
 	getFolderEntities,
+	toggleMessageLike,
+	toggleMessageDislike,
 };

@@ -2572,6 +2572,68 @@ const getFolderEntities = async (workspaceId, folderId) => {
 	const folderEntities = await Workspace.aggregate(pipeline);
 	return folderEntities;
 };
+const toggleMessageLike = async (workspaceId, folderId, chatId, messageId, userId) => {
+	const workspace = await Workspace.findOne({
+		_id: workspaceId,
+		"folders._id": folderId,
+		"folders.chats._id": chatId,
+		"folders.chats.generalMessages._id": messageId,
+	});
+
+	if (!workspace) {
+		throw new ApiError(httpStatus.NOT_FOUND, "Workspace, Folder, Chat, or Message not found");
+	}
+
+	const folder = workspace.folders.id(folderId);
+	const chat = folder.chats.id(chatId);
+	const message = chat.generalMessages.id(messageId);
+	const existingReactionIndex = message.reactions.findIndex((reaction) => reaction.user.toString() === userId.toString());
+	if (existingReactionIndex !== -1) {
+		const existingReaction = message.reactions[existingReactionIndex];
+
+		if (existingReaction.type === "like") {
+			message.reactions.splice(existingReactionIndex, 1);
+		} else {
+			existingReaction.type = "like";
+		}
+	} else {
+		message.reactions.push({ user: userId, type: "like" });
+	}
+
+	await workspace.save();
+	return { success: true, message: "Reaction updated", data: message };
+};
+const toggleMessageDislike = async (workspaceId, folderId, chatId, messageId, userId) => {
+	const workspace = await Workspace.findOne({
+		_id: workspaceId,
+		"folders._id": folderId,
+		"folders.chats._id": chatId,
+		"folders.chats.generalMessages._id": messageId,
+	});
+
+	if (!workspace) {
+		throw new ApiError(httpStatus.NOT_FOUND, "Workspace, Folder, Chat, or Message not found");
+	}
+
+	const folder = workspace.folders.id(folderId);
+	const chat = folder.chats.id(chatId);
+	const message = chat.generalMessages.id(messageId);
+	const existingReactionIndex = message.reactions.findIndex((reaction) => reaction.user.toString() === userId.toString());
+	if (existingReactionIndex !== -1) {
+		const existingReaction = message.reactions[existingReactionIndex];
+
+		if (existingReaction.type === "dislike") {
+			message.reactions.splice(existingReactionIndex, 1);
+		} else {
+			existingReaction.type = "dislike";
+		}
+	} else {
+		message.reactions.push({ user: userId, type: "dislike" });
+	}
+
+	await workspace.save();
+	return { success: true, message: "Reaction updated", data: message };
+};
 
 module.exports = {
 	create,
@@ -2643,4 +2705,6 @@ module.exports = {
 	createDefaultWorkspace,
 	getUserDashboardStats,
 	getFolderEntities,
+	toggleMessageLike,
+	toggleMessageDislike,
 };

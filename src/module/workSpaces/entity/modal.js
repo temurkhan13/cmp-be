@@ -134,12 +134,22 @@ const LinkSchema = new Schema(
 	{ timestamps: true },
 );
 
+const ReactionSchema = new Schema({
+	user: { type: mongoose.Types.ObjectId, ref: "User" },
+	type: {
+		type: String,
+		enum: ["like", "dislike"],
+	},
+	createdAt: { type: Date, default: Date.now },
+});
+
 const MessageSchema = new Schema(
 	{
 		text: { type: String },
 		sender: { type: mongoose.Types.ObjectId, ref: "User" },
 		from: { type: String },
 		pdfPath: { type: String, default: null },
+		reactions: [ReactionSchema],
 		// images: [ImageSchema],
 	},
 	{
