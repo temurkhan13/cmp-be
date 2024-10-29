@@ -1,42 +1,44 @@
-const mongoose = require('mongoose');
-const http2 = require('http2');
-const fs = require('fs');
-const app = require('./app');
-const config = require('../config/config');
-const logger = require('../config/logger');
+const mongoose = require("mongoose");
+const http2 = require("http2");
+const fs = require("fs");
+const app = require("./app");
+const config = require("../config/config");
+const logger = require("../config/logger");
+const { syncPlansFromStripe } = require("../seeders/stripePlanSeeder");
 
+// Enable Mongoose debugging to log all MongoDB queries
 let server;
-mongoose
-  .connect(config.mongoose.url, config.mongoose.options)
-  .then(async () => {
-    logger.info('Connected to MongoDB');
-    server = app.listen(config.port, () => {
-      logger.info(`Listening to port ${config.port}`);
-    });
-  });
+// mongoose.set('debug', true);
+mongoose.connect(config.mongoose.url, config.mongoose.options).then(async () => {
+	logger.info("Connected to MongoDB");
+	server = app.listen(config.port, () => {
+		logger.info(`Listening to port ${config.port}`);
+		// syncPlansFromStripe();
+	});
+});
 
 const exitHandler = () => {
-  if (server) {
-    server.close(() => {
-      logger.info('Server closed');
-      process.exit(1);
-    });
-  } else {
-    process.exit(1);
-  }
+	if (server) {
+		server.close(() => {
+			logger.info("Server closed");
+			process.exit(1);
+		});
+	} else {
+		process.exit(1);
+	}
 };
 
 const unexpectedErrorHandler = (error) => {
-  logger.error(error);
-  exitHandler();
+	logger.error(error);
+	exitHandler();
 };
 
-process.on('uncaughtException', unexpectedErrorHandler);
-process.on('unhandledRejection', unexpectedErrorHandler);
+process.on("uncaughtException", unexpectedErrorHandler);
+process.on("unhandledRejection", unexpectedErrorHandler);
 
-process.on('SIGTERM', () => {
-  logger.info('SIGTERM received');
-  if (server) {
-    server.close();
-  }
+process.on("SIGTERM", () => {
+	logger.info("SIGTERM received");
+	if (server) {
+		server.close();
+	}
 });

@@ -1,102 +1,140 @@
-const httpStatus = require('http-status');
-const catchAsync = require('../../utils/catchAsync');
-const userService = require('./service');
-const tokenService = require('../tokens/service');
-const pick = require('../../utils/pick');
+const httpStatus = require("http-status");
+const catchAsync = require("../../utils/catchAsync");
+const userService = require("./service");
+const tokenService = require("../tokens/service");
+const pick = require("../../utils/pick");
+const { sendForgotPasswordEmail } = require("../../utils/sendGridHelper");
+const config = require("../../config/config");
+const { getURLParams } = require("../../common/global.functions");
+const User = require("./entity/model");
+const { sendVerificationEmail } = require("../../utils/emailService");
+const ApiError = require("../../utils/ApiError");
+const workspaceService = require("../workSpaces/service");
 
 const register = catchAsync(async (req, res) => {
-  const user = await userService.register(req.body);
-  const tokens = await tokenService.generateAuthTokens(user);
-  res.status(httpStatus.CREATED).send({ user, tokens });
+	const user = await userService.register(req.body);
+	const tokens = await tokenService.generateAuthTokens(user);
+	res.status(httpStatus.CREATED).send({ user, tokens });
 });
 
 const login = catchAsync(async (req, res) => {
-  const { email, password } = req.body;
-  const user = await userService.loginUserWithEmailAndPassword(email, password);
-  tokens = await tokenService.generateAuthTokens(user);
-  res.send({ user, tokens });
+	const { email, password } = req.body;
+	const user = await userService.loginUserWithEmailAndPassword(email, password);
+	tokens = await tokenService.generateAuthTokens(user);
+	res.send({ user, tokens });
 });
 
 const logout = catchAsync(async (req, res) => {
-  await userService.logout(req.body);
-  res.status(httpStatus.NO_CONTENT).send();
+	await userService.logout(req.body);
+	res.status(httpStatus.NO_CONTENT).send();
 });
 
 const queryUsers = catchAsync(async (req, res) => {
-  const filter = pick(req.query, []);
-  const options = pick(req.query, ['page', 'limit']);
-  const result = await userService.queryUsers(filter, options);
-  res.send(result);
+	const filter = pick(req.query, []);
+	const options = pick(req.query, ["page", "limit"]);
+	const result = await userService.queryUsers(filter, options);
+	res.send(result);
 });
 
 const getUser = catchAsync(async (req, res) => {
-  const { id } = req.params;
-  const result = await userService.getUserById(id);
-  res.send(result);
+	const { userId } = req.params;
+	const result = await userService.getUserById(userId);
+	if (!result) {
+		throw new ApiError(httpStatus.NOT_FOUND, "User not found");
+	}
+	res.send(result);
 });
 
 const updateUser = catchAsync(async (req, res) => {
-  const { id } = req.params;
-  const { body } = req;
-  const result = await userService.updateUser(id, body);
-  res.send(result);
+	const { userId } = req.params;
+	const { body, file } = req;
+
+	if (file) body.photoPath = file.filename;
+	const result = await userService.updateUser(userId, body);
+	res.send(result);
 });
 
 const deleteUser = catchAsync(async (req, res) => {
-  const { id } = req.params;
-  const result = await userService.deleteUser(id);
-  res.send(result);
+	const { id } = req.params;
+	const result = await userService.deleteUser(id);
+	res.send(result);
 });
 const refreshTokens = catchAsync(async (req, res) => {
-  const { refreshToken } = req.body;
-  const tokens = await userService.refreshAuth(refreshToken);
-  res.send({ ...tokens });
+	const { refreshToken } = req.body;
+	const tokens = await userService.refreshAuth(refreshToken);
+	res.send({ ...tokens });
 });
 
+/**
+ * Forgot Password Module
+ */
 const forgotPassword = catchAsync(async (req, res) => {
-  const user = await User.find({ email: req.body.email });
-  if (user.length === 0) {
-    res.json({ msg: 'Invalid Email Address' });
-  } else {
-    // const resetPasswordToken = await tokenService.generateResetPasswordToken(req.body.email);
-    const result = await emailService.sendResetPasswordEmail(req.body.email);
-    res.json(result);
-  }
+	const { email } = req.body;
+	const OTP = await userService.forgotPassword(email);
+	res.send({ OTP });
 });
 
 const resetPassword = catchAsync(async (req, res) => {
-  await userService.resetPassword(req.query.token, req.body.password);
-  res.status(httpStatus.NO_CONTENT).send();
+	const { body } = req;
+	const user = await userService.resetPassword(body);
+
+	res.send({ success: true });
+});
+const verifyEmail = catchAsync(async (req, res) => {
+	const { user } = req;
+	const { verificationCode } = req.body;
+	console.log("user,", user, verificationCode);
+	const verified = await userService.verifyEmail(user._id, parseInt(verificationCode));
+
+	res.send({ success: true });
 });
 
-const resetPasswordviaEmail = catchAsync(async (req, res) => {
-  const result = await userService.resetPasswordviaEmail(
-    req.body.email,
-    req.body.newPassword
-  );
-  res.json(result);
+const verifyGoogleCallback = catchAsync(async (req, res) => {
+	const { user } = req;
+	await User.findByIdAndUpdate(user._id, { "verificationCode.verify": true });
+	await workspaceService.createDefaultWorkspace(user._id);
+	const tokens = await tokenService.generateAuthTokens(req.user);
+	const params = getURLParams({
+		accessToken: tokens.access.token,
+		refreshToken: tokens.refresh.token,
+	});
+	const clientRedirectRoute = `${config.frontendLoginUrl}?${params.toString()}`;
+	res.redirect(clientRedirectRoute);
 });
 
-// const forcedLogin = catchAsync(async (req, res) => {
-//   const io = req.app.get('io');
-//   await userService.forcedLogin(req.body, io);
-//   res.status(httpStatus.OK).send();
-// });
-const changePassword = catchAsync(async (req, res) => {
-  const result = await userService.changePassword(req.body);
-  res.json({ message: result });
+const getUserFromToken = catchAsync(async (req, res) => {
+	const { user } = req;
+	res.send(user);
 });
+
+const getUserSubscriptions = catchAsync(async (req, res) => {
+	const { user } = req;
+	const { _id: userId, subscription: subscriptionId } = user;
+	const subscription = await userService.getUserSubscription(userId, subscriptionId);
+	res.send(subscription);
+});
+
+const sendVerificationEmailToUser = catchAsync(async (req, res) => {
+	const { user } = req;
+	const { _id: userId } = user;
+	await userService.sendVerificationEmailToUser(userId);
+	res.send({ success: true });
+});
+
 module.exports = {
-  register,
-  login,
-  logout,
-  refreshTokens,
-  forgotPassword,
-  resetPassword,
-  resetPasswordviaEmail,
-  changePassword,
-  getUser,
-  queryUsers,
-  updateUser,
-  deleteUser,
+	register,
+	login,
+	logout,
+	refreshTokens,
+	forgotPassword,
+	resetPassword,
+	getUser,
+	queryUsers,
+	updateUser,
+	deleteUser,
+	verifyEmail,
+	verifyGoogleCallback,
+	getUserFromToken,
+	getUserSubscriptions,
+	sendVerificationEmailToUser,
 };
