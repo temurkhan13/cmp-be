@@ -147,14 +147,12 @@ router.get("/user/sitemaps", auth(), controller.getUserSitemaps);
 router.get("/user/wireframes", auth(), controller.getUserWireframes);
 router.get("/user/dashboard-stats", auth(), controller.getUserDashboardStats);
 
-// sitemaps
 router
 	.route("/:workspaceId/folder/:folderId/sitemap")
 	.post(auth(), controller.addSitemapToWorkspace)
 	.get(auth(), controller.getSitemaps);
 router.route("/:workspaceId/folder/:folderId/sitemap/:sitemapId").get(auth(), controller.getSitemap);
 
-// wireframes
 router
 	.route("/:workspaceId/folder/:folderId/wireframe")
 	.post(auth(), checkSubscription({ checkWireframe: true }), controller.createWireframe)

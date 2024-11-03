@@ -4,8 +4,6 @@ const Subscription = require("../module/Subscription/entity/model");
 
 const getLimitsBasedOnProductName = (productName) => {
 	switch (productName) {
-		case "Test":
-			return { workspaces: 1, projects: 1, sitemaps: 1, wireframes: 1, versionHistory: 2, wordLimit: 50 };
 		case "Free":
 			return { workspaces: 1, projects: 1, sitemaps: 1, wireframes: 1, versionHistory: 2, wordLimit: 10000 };
 		case "Starter":

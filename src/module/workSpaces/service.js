@@ -4,7 +4,7 @@ const Workspace = require("./entity/modal");
 const { default: axios } = require("axios");
 const path = require("path");
 const config = require("../../config/config");
-const { convertMarkdownToPdf, convertMarkdownToPDF } = require("../../utils/markdownToPDF");
+const { convertMarkdownToPDF } = require("../../utils/markdownToPDF");
 const User = require("../users/entity/model");
 const { sendInviteEmail } = require("../../utils/emailService");
 const jwt = require("jsonwebtoken");
@@ -63,7 +63,6 @@ const createFolder = async (workspaceId, folder) => {
 };
 const updateFolder = async (workspaceId, folderId, updateBody) => {
 	try {
-		// Find the workspace and folder
 		const workspace = await Workspace.findOne({
 			_id: workspaceId,
 			"folders._id": folderId,
@@ -72,8 +71,16 @@ const updateFolder = async (workspaceId, folderId, updateBody) => {
 			throw new ApiError(httpStatus.BAD_REQUEST, "Workspace or Folder not found!");
 		}
 
-		// Find the specific folder
 		const folder = workspace.folders.id(folderId);
+
+		if (updateBody.isActive === true) {
+			workspace.folders.forEach((folder) => {
+				if (folder._id.toString() !== folderId && folder.isActive) {
+					folder.isActive = false;
+				}
+			});
+		}
+
 		Object.assign(folder, updateBody);
 		await workspace.save();
 
@@ -1121,7 +1128,7 @@ const updateAssessment = async (workspaceId, folderId, assessmentId, subReportId
 			const pdfFileName = `${Date.now()}_assessment_report.pdf`;
 			const pdfFilePath = path.resolve(process.cwd(), "public/uploads", pdfFileName);
 
-			convertMarkdownToPdf(gptResponse.message, pdfFilePath);
+			convertMarkdownToPDF(gptResponse.message, pdfFilePath);
 
 			// Move the current finalReport to subReport
 			const previousReport = {
@@ -2375,6 +2382,13 @@ const generateAssessmentReports = async (workspaceId, folderId) => {
 	};
 };
 const createDefaultWorkspace = async (userId) => {
+	const existingWorkspace = await Workspace.findOne({
+		userId,
+		workspaceName: "Default Workspace",
+	});
+
+	if (existingWorkspace) return existingWorkspace;
+
 	const workspace = new Workspace({
 		userId,
 		workspaceName: "Default Workspace",
@@ -2383,11 +2397,13 @@ const createDefaultWorkspace = async (userId) => {
 		folders: [
 			{
 				folderName: "Default Folder",
+				isActive: true,
 			},
 		],
 	});
 
 	await workspace.save();
+	return workspace;
 };
 const getUserDashboardStats = async (userId) => {
 	const workspaces = await Workspace.aggregate([
@@ -2412,6 +2428,9 @@ const getUserDashboardStats = async (userId) => {
 
 	const activeWorkspace = workspaces.find((workspace) => workspace.isActive);
 	const totalWorkspaces = workspaces.length;
+
+	const activeProject = activeWorkspace?.folders.find((folder) => folder.isActive);
+	const activeProjectName = activeProject ? activeProject.folderName : "No Active Project";
 	const totalProjects = workspaces.reduce((acc, workspace) => acc + workspace.folders.length, 0);
 
 	const workspaceDetails = workspaces.map((workspace) => ({
@@ -2422,11 +2441,13 @@ const getUserDashboardStats = async (userId) => {
 		folders: workspace.folders.map((folder) => ({
 			id: folder._id,
 			folderName: folder.folderName,
+			isActive: folder.isActive,
 		})),
 	}));
 
 	return {
-		activeWorkspace: activeWorkspace ? activeWorkspace.workspaceName : "No Active Workspace",
+		activeWorkspace: activeWorkspace?.workspaceName || "No Active Workspace",
+		activeProject: activeProjectName,
 		activeSubscription: "Free",
 		totalWorkspaces,
 		totalProjects,

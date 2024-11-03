@@ -6,7 +6,6 @@ const compression = require("compression");
 const cors = require("cors");
 const passport = require("passport");
 const httpStatus = require("http-status");
-// const path = require('path');
 const config = require("../config/config");
 const morgan = require("../config/morgan");
 const { authLimiter } = require("../middlewares/rateLimiter");
@@ -29,41 +28,21 @@ if (config.env !== "test") {
 	app.use(morgan.errorHandler);
 }
 
-// set security HTTP headers
 app.use(helmet());
-
-// parse json request body
 app.use(express.json({ limit: "500mb" }));
 app.use(express.urlencoded({ limit: "500mb", extended: true }));
-
-// parse urlencoded request body
 app.use(express.urlencoded({ extended: true }));
-
-// sanitize request data
 app.use(xss());
 app.use(mongoSanitize());
-
-// gzip compression
 app.use(compression());
-
-// enable cors
 app.use(cors());
 app.options("*", cors());
-
-// passport initialization
 app.use(passport.initialize());
-
-// limit repeated failed requests to auth endpoints
 if (config.env === "production") {
 	app.use("/auth", authLimiter);
 }
-// use public folder to serve files
-// app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.static("public"));
-
 app.use(logRequest);
-
-// define routes here
 app.get("/", (req, res) => {
 	res.send("OOKKKKKK");
 });
@@ -76,15 +55,11 @@ app.use("/api/survey", assessmentRoutes);
 app.use("/api/dpb", dpbRoutes);
 app.use("/api/workspace", workspaceRoutes);
 app.use("/api/stripe", stripeRoutes);
-// send back a 404 error for any unknown api request
+
 app.use((req, res, next) => {
 	next(new ApiError(httpStatus.NOT_FOUND, "API Not found"));
 });
-
-// convert error to ApiError, if needed
 app.use(errorConverter);
-
-// handle error
 app.use(errorHandler);
 
 module.exports = app;

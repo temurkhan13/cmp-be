@@ -396,6 +396,7 @@ const FolderSchema = new Schema(
 			},
 		],
 		wireframes: [wireframeSchema],
+		isActive: { type: Boolean, default: false },
 		isSoftDeleted: { type: Boolean, default: false },
 	},
 	{ timestamps: true },
@@ -418,7 +419,7 @@ WorkspaceSchema.plugin(paginate);
 
 WorkspaceSchema.pre("save", async function (next) {
 	if (this.isActive) {
-		await Workspace.updateMany({ userId: this.userId }, { isActive: false });
+		await Workspace.updateMany({ userId: this.userId, _id: { $ne: this._id } }, { isActive: false });
 	}
 	next();
 });

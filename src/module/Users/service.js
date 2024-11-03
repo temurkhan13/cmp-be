@@ -127,8 +127,7 @@ const logout = async (data) => {
 		blacklisted: false,
 	});
 	if (!refreshTokenDoc) {
-		await systemConfigService.updateActiveSessionCount(-1);
-		throw new ApiError(httpStatus.NOT_FOUND, "Not found");
+		throw new ApiError(httpStatus.BAD_REQUEST, "No token found!");
 	}
 	await refreshTokenDoc.remove();
 };
