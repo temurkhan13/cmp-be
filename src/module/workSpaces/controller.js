@@ -102,32 +102,6 @@ const assistantChatUpdate = catchAsync(async (req, res) => {
 
 	res.status(httpStatus.CREATED).send(doc);
 });
-// const updateChatMessage = catchAsync(async (req, res) => {
-//   const { workspaceId, folderId, chatId, messageId } = req.params;
-//   const { user, body } = req;
-//   // if (req.file) {
-//   //   body.pdfPath = req.file.filename;
-//   // }
-//   body.sender = user._id;
-//   if (req.file) {
-//     const fileType = req.file.mimetype.split('/')[0];
-//     if (fileType === 'image') {
-//       body.media = [{ url: req.file.filename, timestamp: new Date() }];
-//     } else if (req.file.mimetype === 'application/pdf') {
-//       body.documents = [
-//         { name: req.file.filename, date: new Date(), size: req.file.size },
-//       ];
-//     }
-//   }
-//   const doc = await service.updateChatMessage(
-//     workspaceId,
-//     folderId,
-//     chatId,
-//     messageId,
-//     body
-//   );
-//   res.status(httpStatus.CREATED).send(doc);
-// });
 const deleteAssistantChat = catchAsync(async (req, res) => {
 	const { workspaceId, folderId, chatId } = req.params;
 	const assessment = await service.deleteAssistantChat(workspaceId, folderId, chatId);
@@ -516,6 +490,13 @@ const toggleMessageDislike = catchAsync(async (req, res) => {
 	const dislike = await service.toggleMessageDislike(workspaceId, folderId, chatId, messageId, user._id);
 	res.status(httpStatus.OK).send(dislike);
 });
+const moveChatToFolderOfSameWorkspace = catchAsync(async (req, res) => {
+	const { workspaceId, folderId, chatId } = req.params;
+	const { newFolderId } = req.body;
+
+	const result = await service.moveChatToFolderOfSameWorkspace(workspaceId, folderId, chatId, newFolderId);
+	res.status(httpStatus.OK).send(result);
+});
 
 module.exports = {
 	create,
@@ -589,4 +570,5 @@ module.exports = {
 	getFolderEntities,
 	toggleMessageLike,
 	toggleMessageDislike,
+	moveChatToFolderOfSameWorkspace,
 };

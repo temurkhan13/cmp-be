@@ -7,9 +7,9 @@ const getLimitsBasedOnProductName = (productName) => {
 		case "Free":
 			return { workspaces: 1, projects: 1, sitemaps: 1, wireframes: 1, versionHistory: 2, wordLimit: 10000 };
 		case "Starter":
-			return { workspaces: 2, projects: 3, sitemaps: 1, wireframes: 1, versionHistory: 5, wordLimit: 30000 };
+			return { workspaces: 2, projects: 3, sitemaps: 3, wireframes: 3, versionHistory: 5, wordLimit: 30000 };
 		case "Pro":
-			return { workspaces: 5, projects: 5, sitemaps: 1, wireframes: 1, versionHistory: 7, wordLimit: 50000 };
+			return { workspaces: 5, projects: 5, sitemaps: 5, wireframes: 5, versionHistory: 7, wordLimit: 50000 };
 		default:
 			throw new Error(`Unknown product: ${productName}`);
 	}

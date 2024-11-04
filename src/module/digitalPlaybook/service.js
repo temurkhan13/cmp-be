@@ -71,12 +71,9 @@ const transformResponse = (apiResponse) => {
 
 const create = async (sitemapBody) => {
 	try {
-		// Step 1: Create the initial sitemap document
-		sitemapBody.name = "Initial Sitemap";
+		sitemapBody.name = sitemapBody.sitemapName || "Initial Sitemap";
 		const sitemap = await DigitalPlaybook.create(sitemapBody);
-		console.log("sitemap", sitemap);
 
-		// Initial body for the first request
 		const initialBody = {
 			user_id: sitemapBody.userId,
 			chat_id: sitemap._id,
@@ -84,11 +81,7 @@ const create = async (sitemapBody) => {
 			sitemap_name: sitemapBody.sitemapName,
 		};
 
-		console.log("Initial body:", initialBody);
-
-		// Step 2: Send the initial request
 		let gptResponse = await axios.post(`${config.baseUrl}/sitemap`, initialBody);
-
 		const transformedResponse = transformResponse({
 			_id: sitemap._id,
 			stages: [

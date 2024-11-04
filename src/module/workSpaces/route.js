@@ -43,14 +43,12 @@ router.patch(
 
 router.get("/:workspaceId/folder/:folderId/chat/:chatId/media", auth(), controller.getChatMedia);
 router.get("/:workspaceId/folder/:folderId/chat/:chatId/links", auth(), controller.getChatLinks);
-
 router.get("/:workspaceId/folder/:folderId/chat/:chatId/documents", auth(), controller.getChatDocuments);
-
-// router.post(
-//   '/:workspaceId/folder/:folderId/chat/:chatId/message/:messageId/comment',
-//   auth(),
-//   controller.createComment
-// );
+router.patch(
+	"/:workspaceId/folder/:folderId/chat/:chatId/move-to-folder",
+	auth(),
+	controller.moveChatToFolderOfSameWorkspace,
+);
 
 router.post(
 	"/:workspaceId/folder/:folderId/:contextType/:contextId/message/:messageId/comment",

@@ -84,7 +84,7 @@ const userSchema = mongoose.Schema(
 				chatId: { type: mongoose.Types.ObjectId, ref: "Chat" },
 			},
 		],
-		subscription: { type: mongoose.Schema.Types.ObjectId, ref: "UserSubscription" },
+		subscription: { type: mongoose.Schema.Types.ObjectId, ref: "UserSubscription", default: null },
 	},
 	{
 		toJSON: {

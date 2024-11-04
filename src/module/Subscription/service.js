@@ -36,7 +36,7 @@ const createSubscription = async (userId, subscriptionId) => {
 
 	return {
 		status: true,
-		sessionId: session.id,
+		redirectToCheckoutURL: session.url,
 	};
 };
 const upgradeSubscription = async (userId, subscriptionId, newPriceId) => {

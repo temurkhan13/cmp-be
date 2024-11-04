@@ -13,6 +13,8 @@ const getSubscriptions = catchAsync(async (req, res) => {
 		price: 1,
 		workspaces: 1,
 		projects: 1,
+		sitemaps: 1,
+		wireframes: 1,
 		versionHistory: 1,
 		wordLimit: 1,
 	};

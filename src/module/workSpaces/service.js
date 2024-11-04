@@ -2655,6 +2655,32 @@ const toggleMessageDislike = async (workspaceId, folderId, chatId, messageId, us
 	await workspace.save();
 	return { success: true, message: "Reaction updated", data: message };
 };
+const moveChatToFolderOfSameWorkspace = async (workspaceId, sourceFolderId, chatId, newFolderId) => {
+	const workspace = await Workspace.findOne({
+		_id: workspaceId,
+		"folders._id": sourceFolderId,
+		"folders.chats._id": chatId,
+	});
+
+	if (!workspace) {
+		throw new ApiError(httpStatus.NOT_FOUND, "Workspace, Folder, or Chat not found");
+	}
+
+	const sourceFolder = workspace.folders.id(sourceFolderId);
+	const chat = sourceFolder.chats.id(chatId);
+
+	sourceFolder.chats.pull(chatId);
+
+	const targetFolder = workspace.folders.id(newFolderId);
+	if (!targetFolder) {
+		throw new ApiError(httpStatus.NOT_FOUND, "Target folder not found in workspace");
+	}
+	targetFolder.chats.push(chat);
+
+	await workspace.save();
+
+	return { success: true, message: "Chat moved successfully" };
+};
 
 module.exports = {
 	create,
@@ -2728,4 +2754,5 @@ module.exports = {
 	getFolderEntities,
 	toggleMessageLike,
 	toggleMessageDislike,
+	moveChatToFolderOfSameWorkspace,
 };
