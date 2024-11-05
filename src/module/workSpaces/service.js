@@ -57,7 +57,6 @@ const createFolder = async (workspaceId, folder) => {
 		const folders = workspace.folders;
 		return workspace.folders[folders.length - 1];
 	} catch (error) {
-		console.error("Error creating folder:", error);
 		throw new ApiError(httpStatus.BAD_REQUEST, `Error creating folder: ${error.message}`);
 	}
 };
@@ -86,7 +85,6 @@ const updateFolder = async (workspaceId, folderId, updateBody) => {
 
 		return folder;
 	} catch (error) {
-		console.error("Error updating folder:", error);
 		throw new ApiError(httpStatus.BAD_REQUEST, `Error updating folder: ${error.message}`);
 	}
 };
@@ -259,8 +257,6 @@ const acceptChatInvite = async (token) => {
 		// Return the updated chat
 		return { success: true, chat: updatedChat };
 	} catch (error) {
-		console.log("error:", error);
-
 		throw new ApiError(httpStatus.BAD_REQUEST, `Error accepting invite: ${error.message}`);
 	}
 };
@@ -421,7 +417,6 @@ const assistantChatUpdate = async (workspaceId, folderId, chatId, messageData) =
 			try {
 				await axios.post(`${config.baseUrl}/upload-files`, body);
 			} catch (error) {
-				console.error("Failed to send data:", error);
 				throw new Error("AI server error");
 			}
 		}
@@ -457,11 +452,9 @@ const assistantChatUpdate = async (workspaceId, folderId, chatId, messageData) =
 
 			return newChat;
 		} catch (error) {
-			console.error("Failed to send data to AI server:", error.message);
 			throw new Error("AI server error");
 		}
 	} catch (error) {
-		console.error("Error adding message to chat:", error);
 		throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, error.message);
 	}
 };
@@ -483,7 +476,6 @@ const getChatMedia = async (workspaceId, folderId, chatId) => {
 		// const media = chat.generalMessages.flatMap((message) => message.media);
 		return chat.media;
 	} catch (error) {
-		console.log("error getting chat media", error);
 		throw new ApiError(httpStatus.NOT_FOUND, `error getting chat media: ${error.message}`);
 	}
 };
@@ -505,7 +497,6 @@ const getChatLinks = async (workspaceId, folderId, chatId) => {
 		// const links = chat.generalMessages.flatMap((message) => message.links);
 		return chat.links;
 	} catch (error) {
-		console.log("error getting chat links", error);
 		throw new ApiError(httpStatus.NOT_FOUND, `error getting chat links: ${error.message}`);
 	}
 };
@@ -527,7 +518,6 @@ const getChatDocuments = async (workspaceId, folderId, chatId) => {
 		// const documents = chat.flatMap((message) => message.documents);
 		return chat.documents;
 	} catch (error) {
-		console.log("error getting chat documents", error);
 		throw new ApiError(httpStatus.NOT_FOUND, `error getting chat documents: ${error.message}`);
 	}
 };
@@ -607,7 +597,6 @@ const createComment = async (
 			throw new ApiError(httpStatus.BAD_REQUEST, "Invalid context type!");
 		}
 	} catch (error) {
-		console.error("Error creating comment:", error);
 		throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, error.message);
 	}
 };
@@ -643,7 +632,6 @@ const getUserChatComments = async (userId) => {
 		});
 		return comments;
 	} catch (error) {
-		console.error("Error retrieving comments:", error);
 		throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, error.message);
 	}
 };
@@ -699,7 +687,6 @@ const updateComment = async (workspaceId, folderId, contextId, messageId, commen
 
 		return comment;
 	} catch (error) {
-		console.error("Error updating comment:", error);
 		throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, error.message);
 	}
 };
@@ -767,7 +754,6 @@ const bookmarkMessage = async (workspaceId, folderId, contextId, messageId, user
 
 		return message.bookmarks[message.bookmarks.length - 1];
 	} catch (error) {
-		console.error("Error bookmarking message:", error);
 		throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, error.message);
 	}
 };
@@ -812,7 +798,6 @@ const unbookmarkMessage = async (workspaceId, folderId, contextId, messageId, bo
 
 		return bookmark;
 	} catch (error) {
-		console.error("Error unbookmarking message:", error);
 		throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, error.message);
 	}
 };
@@ -849,7 +834,6 @@ const getBookmarksForUser = async (userId) => {
 
 		return bookmarks;
 	} catch (error) {
-		console.error("Error retrieving bookmarks:", error);
 		throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, error.message);
 	}
 };
@@ -884,7 +868,6 @@ const getBookmarksForChat = async (userId, workspaceId, folderId, chatId) => {
 
 		return bookmarks;
 	} catch (error) {
-		console.error("Error retrieving bookmarks for chat:", error);
 		throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, error.message);
 	}
 };
@@ -908,7 +891,6 @@ const addReplyToComment = async (workspaceId, folderId, chatId, messageId, comme
 		await workspace.save();
 		return comment.replies[comment.replies.length - 1];
 	} catch (error) {
-		console.error("Error adding reply to comment:", error);
 		throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, error.message);
 	}
 };
@@ -933,7 +915,6 @@ const updateReplyInComment = async (workspaceId, folderId, chatId, messageId, co
 		await workspace.save();
 		return reply;
 	} catch (error) {
-		console.error("Error updating reply in comment:", error);
 		throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, error.message);
 	}
 };
@@ -961,9 +942,10 @@ const createAssessment = async (workspaceId, folderId, body) => {
 			chat_id: folderId,
 			message: body.message || "",
 			general_info: body.generalInfo || "",
-			bussiness_info: body.bussiness_info || "",
+			business_info: body.business_info || "",
 			assessment_name: body.assessmentName,
 		};
+
 		const gptURL = `${config.baseUrl}/assesment-chat`;
 		const gptResponse = await makeAxiosCall({ url: gptURL, method: "POST", data: apiBody });
 		const nextQuestion = gptResponse.message;
@@ -984,6 +966,7 @@ const createAssessment = async (workspaceId, folderId, body) => {
 				timestamp: null,
 			},
 		});
+
 		const newAssessment = {
 			name: body.name,
 			version: 1,
@@ -997,15 +980,47 @@ const createAssessment = async (workspaceId, folderId, body) => {
 			documents: body.documents || [],
 		};
 
+		const markdownPattern = /(```|#\s|-\s|\*\*|_\s|>\s)/;
+		const containsMarkdown = markdownPattern.test(nextQuestion);
+		let isReportGenerated = false;
+
+		if (containsMarkdown) {
+			const pdfFileName = `${Date.now()}_initial_assessment_report.pdf`;
+			const pdfFilePath = path.resolve(process.cwd(), "public/uploads", pdfFileName);
+
+			convertMarkdownToPDF(nextQuestion, pdfFilePath);
+
+			newAssessment.report[0].finalReport = nextQuestion;
+			newAssessment.report[0].finalReportURL = `/uploads/${pdfFileName}`;
+			newAssessment.report[0].isReportGenerated = true;
+			isReportGenerated = true; // Update the flag when report is generated
+		} else {
+			// No markdown, store the question as the next question awaiting response
+			subReport.questionAnswer.push({
+				question: {
+					content: nextQuestion,
+					timestamp: new Date(),
+				},
+				answer: {
+					userId: null,
+					content: "", // Answer is pending from the user
+					timestamp: null,
+				},
+			});
+		}
+
 		const updatedWorkspace = await Workspace.findOneAndUpdate(
 			{ _id: workspaceId, "folders._id": folderId },
 			{ $push: { "folders.$.assessments": newAssessment } },
 			{ new: true, returnOriginal: false },
 		);
+
 		const workspaceFolder = updatedWorkspace.folders.find((folder) => folder._id.toString() === folderId);
 		const createdAssessment = workspaceFolder.assessments.at(-1).toObject();
 
 		createdAssessment.text = nextQuestion;
+		createdAssessment.isReportGenerated = isReportGenerated; // Include report generation status
+
 		return createdAssessment;
 	} catch (error) {
 		throw new ApiError(httpStatus.BAD_REQUEST, `Error creating assessment: ${error.message}`);
@@ -1013,14 +1028,12 @@ const createAssessment = async (workspaceId, folderId, body) => {
 };
 const updateAssessment = async (workspaceId, folderId, assessmentId, subReportId, updateBody) => {
 	try {
-		// Find the workspace, folder, and assessment
 		const workspace = await Workspace.findOne({
 			_id: workspaceId,
 			"folders._id": folderId,
 			"folders.assessments._id": assessmentId,
 			"folders.assessments.report.subReport._id": subReportId,
 		});
-
 		if (!workspace) {
 			throw new ApiError(httpStatus.BAD_REQUEST, "Workspace, Folder, or Assessment not found!");
 		}
@@ -1031,30 +1044,19 @@ const updateAssessment = async (workspaceId, folderId, assessmentId, subReportId
 			timestamp: new Date(),
 		};
 
-		const updatedWorkspace = await Workspace.findOneAndUpdate(
-			{
-				_id: workspaceId,
-				"folders._id": folderId,
-				"folders.assessments._id": assessmentId,
-				"folders.assessments.report.subReport._id": subReportId,
-			},
-			{
-				$set: {
-					"folders.$.assessments.$[assessment].report.$[].subReport.$[subReport].questionAnswer.$[lastIndex].answer":
-						previousAnswer,
-				},
-			},
-			{
-				arrayFilters: [
-					{ "assessment._id": assessmentId },
-					{ "subReport._id": subReportId },
-					{ "lastIndex._id": { $exists: true } },
-				],
-				new: true,
-			},
-		);
+		const folder = workspace.folders.id(folderId);
+		const projectAssessment = folder.assessments.id(assessmentId);
+		const report = projectAssessment.report.find((r) => r.subReport.id(subReportId));
+		const reportSubReport = report.subReport.id(subReportId);
 
-		// Find the relevant assessment
+		if (!isArrayWithLength(reportSubReport.questionAnswer)) {
+			throw new ApiError(httpStatus.BAD_REQUEST, "No questionAnswer items found in this assessment.");
+		}
+
+		const lastQuestionAnswer = reportSubReport.questionAnswer[reportSubReport.questionAnswer.length - 1];
+		lastQuestionAnswer.answer = previousAnswer;
+		const updatedWorkspace = await workspace.save();
+
 		const assessment = updatedWorkspace.folders
 			.find((folder) => folder._id.toString() === folderId)
 			.assessments.find((assessment) => assessment._id.toString() === assessmentId);
@@ -1063,34 +1065,14 @@ const updateAssessment = async (workspaceId, folderId, assessmentId, subReportId
 			throw new ApiError(httpStatus.BAD_REQUEST, "Assessment not found!");
 		}
 
-		// Retrieve the pending question from the subReport
 		const subReport = assessment.report[0].subReport.find((sub) => sub._id.toString() === subReportId);
 
 		if (!subReport) {
 			throw new ApiError(httpStatus.BAD_REQUEST, "No pending question found!");
 		}
 
-		// Create a new question-answer entry with the user's response
-		// const newQuestionAnswer = {
-		// 	question: {
-		// 		content: subReport.pendingQuestion,
-		// 		timestamp: new Date(),
-		// 	},
-		// 	answer: {
-		// 		userId: assessment.userId, // Ensure this is the correct user
-		// 		content: updateBody.content,
-		// 		timestamp: new Date(),
-		// 	},
-		// };
-
-		// Add the new question/answer to the subReport and remove the pending question
-		// subReport.questionAnswer.push(newQuestionAnswer);
-		// delete subReport.pendingQuestion; // Clear the pending question
-
-		// Prepare the history for the API call
 		const textMessages = ["", ...subReport.questionAnswer.flatMap((qa) => [qa.question.content, qa.answer.content])];
 
-		// Make the API call with the updated history
 		const apiBody = {
 			user_id: updatedWorkspace.userId,
 			chat_id: assessment._id.toString(),
@@ -1108,8 +1090,8 @@ const updateAssessment = async (workspaceId, folderId, assessmentId, subReportId
 			throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, "Error making API call to GPT!");
 		}
 
-		// Check if the response contains markdown
-		const containsMarkdown = gptResponse.message.includes("```");
+		const markdownPattern = /(```|#\s|-\s|\*\*|_\s|>\s)/;
+		const containsMarkdown = markdownPattern.test(gptResponse.message);
 		const nextQuestion = gptResponse.message;
 		const nextQuestionData = {
 			question: {
@@ -1124,13 +1106,11 @@ const updateAssessment = async (workspaceId, folderId, assessmentId, subReportId
 		};
 
 		if (containsMarkdown) {
-			// Convert markdown to PDF
 			const pdfFileName = `${Date.now()}_assessment_report.pdf`;
 			const pdfFilePath = path.resolve(process.cwd(), "public/uploads", pdfFileName);
 
 			convertMarkdownToPDF(gptResponse.message, pdfFilePath);
 
-			// Move the current finalReport to subReport
 			const previousReport = {
 				finalSubReport: assessment.report[0].finalReport,
 				finalSubReportURL: assessment.report[0].finalReportURL,
@@ -1138,12 +1118,11 @@ const updateAssessment = async (workspaceId, folderId, assessmentId, subReportId
 				questionAnswer: subReport.questionAnswer,
 			};
 
-			// Update the subReport with the previous finalReport
 			assessment.report[0].subReport.push(previousReport);
 
-			// Update the current finalReport
 			assessment.report[0].finalReport = gptResponse.message;
 			assessment.report[0].finalReportURL = `/uploads/${pdfFileName}`;
+			assessment.report[0].isReportGenerated = true;
 		} else {
 			// The response does not contain markdown
 			// Store the next question as the pending question
@@ -1174,7 +1153,12 @@ const updateAssessment = async (workspaceId, folderId, assessmentId, subReportId
 			},
 		);
 
-		return { success: true, question: nextQuestionData.question, text: nextQuestion };
+		return {
+			success: true,
+			question: nextQuestionData.question,
+			text: nextQuestion,
+			isReportGenerated: containsMarkdown ? true : false,
+		};
 	} catch (error) {
 		throw new ApiError(httpStatus.BAD_REQUEST, `Error storing user response: ${error.message}`);
 	}

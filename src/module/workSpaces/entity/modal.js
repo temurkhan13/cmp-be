@@ -71,6 +71,7 @@ const ReportSchema = new Schema(
 		finalReportURL: String,
 		ReportTitle: String,
 		subReport: [SubReportSchema],
+		isReportGenerated: { type: Boolean, default: false },
 	},
 	{ timestamps: true },
 );
