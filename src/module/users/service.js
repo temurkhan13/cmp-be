@@ -107,8 +107,7 @@ const resetPassword = async (body) => {
 	if (user.OTP["key"] !== OTP) {
 		throw new ApiError(httpStatus.BAD_REQUEST, "Invalid OTP");
 	}
-	const hash = await bcrypt.hash(newPassword, 8);
-	user.password = hash;
+	user.password = newPassword;
 	user.OTP["key"] = null;
 	await user.save();
 	return true;
