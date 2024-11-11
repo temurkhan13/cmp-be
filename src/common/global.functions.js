@@ -75,6 +75,11 @@ const deepMerge = (target, source) => {
 		}
 	}
 };
+const isMarkdownDetected = (text) => {
+	if (!text) return false;
+	const markdownPattern = /(```|#\s|-\s|\*\*|_\s|>\s)/;
+	return markdownPattern.test(text);
+};
 
 module.exports = {
 	isArrayWithLength,
@@ -87,4 +92,5 @@ module.exports = {
 	capitalize,
 	handleStatus,
 	deepMerge,
+	isMarkdownDetected,
 };

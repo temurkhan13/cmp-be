@@ -203,7 +203,6 @@ const AssessmentSchema = new Schema(
 		media: [MediaSchema],
 		tasks: [TaskSchema],
 		versions: [VersionSchema],
-		// images: [ImageSchema],
 		documents: [DocumentSchema],
 		links: [LinkSchema],
 		isSoftDeleted: { type: Boolean, default: false },
