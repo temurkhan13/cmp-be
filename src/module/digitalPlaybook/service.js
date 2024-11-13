@@ -37,7 +37,7 @@ const transformResponse = (apiResponse) => {
 		let nodeData = [];
 		let nodes = [];
 
-		if (["Discovery", "Adopt", "Deploy", "Design"].includes(stageName)) {
+		if (["Discovery", "Adopt", "Deploy", "Design", "Run"].includes(stageName)) {
 			nodeData = transformSpecificNodeData(
 				Object.entries(messageObj)
 					.filter(([key, value]) => typeof value === "string" && value.length > 0)
@@ -58,9 +58,14 @@ const transformResponse = (apiResponse) => {
 				.filter(([key, value]) => typeof value === "string" && value.length > 0)
 				.map(([heading, description]) => ({ heading, description }));
 
-			nodes = Object.entries(messageObj)
-				.filter(([key, value]) => typeof value === "string" && value.length === 0)
-				.map(([heading]) => ({ heading, description: "empty" }));
+			// nodes = Object.entries(messageObj)
+			// 	.filter(([key, value]) => typeof value === "string" && value.length === 0)
+			// 	.map(([heading]) => ({ heading, description: "empty" }));
+
+			nodes = ["Discovery", "Adopt", "Deploy", "Design", "Run"].map((heading) => ({
+				heading,
+				description: "empty",
+			}));
 		}
 
 		return { stage: stageName, nodeData, nodes };
@@ -380,6 +385,14 @@ const deleteReply = async (playbookId, stageId, nodeId, nodeDataId, commentId, r
 	return { success: true };
 };
 
+const simpleUpdate = async (id, body) => {
+	const sitemap = await DigitalPlaybook.findById(id);
+	if (!sitemap) throw new ApiError(httpStatus.BAD_REQUEST, "Sitemap not found");
+	Object.assign(sitemap, body);
+	await sitemap.save();
+	return sitemap;
+};
+
 module.exports = {
 	create,
 	querySitemaps,
@@ -394,4 +407,5 @@ module.exports = {
 	createReply,
 	updateReply,
 	deleteReply,
+	simpleUpdate,
 };

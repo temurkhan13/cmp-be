@@ -1,6 +1,7 @@
 const mongoose = require("mongoose");
 const { paginate, toJSON } = require("../../../utils/plugins");
 const { workspaceAssessment } = require("../../../common/schema");
+const { mongoDuplicateKeyError } = require("../../../utils/mongoCustomHandlers");
 const Schema = mongoose.Schema;
 
 const reportSchema = new Schema({
@@ -59,6 +60,8 @@ workspaceAssessmentSchema.pre("save", async function (next) {
 
 workspaceAssessmentSchema.index({ folderId: 1, isSoftDeleted: 1 });
 workspaceAssessmentSchema.index({ folderId: 1, name: 1 }, { unique: true });
+
+mongoDuplicateKeyError(workspaceAssessmentSchema);
 
 const WorkspaceAssessment = mongoose.model("WorkspaceAssessment", workspaceAssessmentSchema);
 module.exports = WorkspaceAssessment;
