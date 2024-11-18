@@ -5,7 +5,6 @@ const config = require("../../config/config");
 const { default: axios } = require("axios");
 const { parseJsonIfPossible } = require("../../common/global.functions");
 
-// Utility function to transform nodeData for specific stages
 const transformSpecificNodeData = (nodeData) => {
 	if (!Array.isArray(nodeData)) {
 		return nodeData;
@@ -25,8 +24,6 @@ const transformSpecificNodeData = (nodeData) => {
 
 	return nodeData;
 };
-
-// Utility function to transform the response
 const transformResponse = (apiResponse) => {
 	const { _id, stages } = apiResponse;
 	const formattedStages = stages.map((stage) => {
@@ -73,7 +70,6 @@ const transformResponse = (apiResponse) => {
 
 	return { id: _id, stages: formattedStages };
 };
-
 const create = async (sitemapBody) => {
 	try {
 		sitemapBody.name = sitemapBody.sitemapName || "Initial Sitemap";
@@ -107,11 +103,9 @@ const create = async (sitemapBody) => {
 		throw new ApiError(httpStatus.BAD_REQUEST, "AI server error");
 	}
 };
-
 const querySitemaps = async (filter, options) => {
 	return await DigitalPlaybook.paginate(filter, options);
 };
-
 const getSitemap = async (id) => {
 	const sitemap = await DigitalPlaybook.findById(id);
 	console.log("sitemap", sitemap);
@@ -125,7 +119,6 @@ const deleteSitemap = async (id) => {
 	await sitemap.remove();
 	return { message: "Card remove successfully" };
 };
-
 const updateSitemap = async (id, sitemapBody) => {
 	try {
 		// Step 1: Find the existing sitemap document
@@ -171,7 +164,6 @@ const updateSitemap = async (id, sitemapBody) => {
 		throw new ApiError(httpStatus.BAD_REQUEST, "AI server error");
 	}
 };
-
 const updateSitemapFields = async (id, updateBody) => {
 	try {
 		const sitemap = await DigitalPlaybook.findById(id);
@@ -229,7 +221,6 @@ const updateSitemapFields = async (id, updateBody) => {
 		throw new ApiError(httpStatus.BAD_REQUEST, "Error updating sitemap fields");
 	}
 };
-
 const wireFrame = async (wireframeBody) => {
 	try {
 		// Initial body for the first request
@@ -250,8 +241,6 @@ const wireFrame = async (wireframeBody) => {
 		throw new ApiError(httpStatus.BAD_REQUEST, "AI server error");
 	}
 };
-
-// Create a comment
 const createComment = async (playbookId, stageId, nodeId, nodeDataId, commentData) => {
 	const playbook = await DigitalPlaybook.findById(playbookId);
 	if (!playbook) throw new ApiError(httpStatus.BAD_REQUEST, "Playbook not found");
@@ -273,8 +262,6 @@ const createComment = async (playbookId, stageId, nodeId, nodeDataId, commentDat
 
 	return nodeData.comments[nodeData.comments.length - 1];
 };
-
-// Update a comment
 const updateComment = async (playbookId, stageId, nodeId, nodeDataId, commentId, commentData) => {
 	const playbook = await DigitalPlaybook.findById(playbookId);
 	if (!playbook) throw new ApiError(httpStatus.BAD_REQUEST, "Playbook not found");
@@ -294,8 +281,6 @@ const updateComment = async (playbookId, stageId, nodeId, nodeDataId, commentId,
 
 	return comment;
 };
-
-// Delete a comment
 const deleteComment = async (playbookId, stageId, nodeId, nodeDataId, commentId) => {
 	const playbook = await DigitalPlaybook.findById(playbookId);
 	if (!playbook) throw new ApiError(httpStatus.BAD_REQUEST, "Playbook not found");
@@ -315,8 +300,6 @@ const deleteComment = async (playbookId, stageId, nodeId, nodeDataId, commentId)
 
 	return { success: true };
 };
-
-// Create a reply
 const createReply = async (playbookId, stageId, nodeId, nodeDataId, commentId, replyData) => {
 	const playbook = await DigitalPlaybook.findById(playbookId);
 	if (!playbook) throw new ApiError(httpStatus.BAD_REQUEST, "Playbook not found");
@@ -336,8 +319,6 @@ const createReply = async (playbookId, stageId, nodeId, nodeDataId, commentId, r
 
 	return comment.replies[comment.replies.length - 1];
 };
-
-// Update a reply
 const updateReply = async (playbookId, stageId, nodeId, nodeDataId, commentId, replyId, replyData) => {
 	const playbook = await DigitalPlaybook.findById(playbookId);
 	if (!playbook) throw new ApiError(httpStatus.BAD_REQUEST, "Playbook not found");
@@ -360,8 +341,6 @@ const updateReply = async (playbookId, stageId, nodeId, nodeDataId, commentId, r
 
 	return reply;
 };
-
-// Delete a reply
 const deleteReply = async (playbookId, stageId, nodeId, nodeDataId, commentId, replyId) => {
 	const playbook = await DigitalPlaybook.findById(playbookId);
 	if (!playbook) throw new ApiError(httpStatus.BAD_REQUEST, "Playbook not found");
@@ -384,13 +363,76 @@ const deleteReply = async (playbookId, stageId, nodeId, nodeDataId, commentId, r
 
 	return { success: true };
 };
-
 const simpleUpdate = async (id, body) => {
 	const sitemap = await DigitalPlaybook.findById(id);
 	if (!sitemap) throw new ApiError(httpStatus.BAD_REQUEST, "Sitemap not found");
 	Object.assign(sitemap, body);
 	await sitemap.save();
 	return sitemap;
+};
+const addNode = async (playbookId, stageId, nodeBody) => {
+	const playbook = await DigitalPlaybook.findById(playbookId);
+	if (!playbook) {
+		throw new ApiError(httpStatus.NOT_FOUND, "Digital Playbook not found");
+	}
+
+	const stage = playbook.stages.find((s) => s._id.toString() === stageId);
+	if (!stage) {
+		throw new ApiError(httpStatus.NOT_FOUND, "Stage not found");
+	}
+
+	stage.nodes.push(nodeBody);
+	await playbook.save();
+	return playbook;
+};
+const addNodeData = async (playbookId, stageId, nodeId, nodeDataBody) => {
+	const playbook = await DigitalPlaybook.findById(playbookId);
+	if (!playbook) {
+		throw new ApiError(httpStatus.NOT_FOUND, "Digital Playbook not found");
+	}
+
+	const stage = playbook.stages.find((s) => s._id.toString() === stageId);
+	if (!stage) {
+		throw new ApiError(httpStatus.NOT_FOUND, "Stage not found");
+	}
+
+	const node = stage.nodes.find((n) => n._id.toString() === nodeId);
+	if (!node) {
+		throw new ApiError(httpStatus.NOT_FOUND, "Node not found");
+	}
+
+	node.nodeData.push(nodeDataBody);
+	await playbook.save();
+	return playbook;
+};
+const updateNodeData = async (playbookId, stageId, nodeId, nodeDataId, updateBody) => {
+	const playbook = await DigitalPlaybook.findById(playbookId);
+	if (!playbook) {
+		throw new ApiError(httpStatus.NOT_FOUND, "Digital Playbook not found");
+	}
+
+	const stage = playbook.stages.find((s) => s._id.toString() === stageId);
+	if (!stage) {
+		throw new ApiError(httpStatus.NOT_FOUND, "Stage not found");
+	}
+
+	const node = stage.nodes.find((n) => n._id.toString() === nodeId);
+	if (!node) {
+		throw new ApiError(httpStatus.NOT_FOUND, "Node not found");
+	}
+
+	if (nodeDataId) {
+		const nodeData = node.nodeData.find((nd) => nd._id.toString() === nodeDataId);
+		if (!nodeData) {
+			throw new ApiError(httpStatus.NOT_FOUND, "NodeData not found");
+		}
+		Object.assign(nodeData, updateBody);
+	} else {
+		Object.assign(node, updateBody);
+	}
+
+	await playbook.save();
+	return playbook;
 };
 
 module.exports = {
@@ -408,4 +450,7 @@ module.exports = {
 	updateReply,
 	deleteReply,
 	simpleUpdate,
+	addNode,
+	addNodeData,
+	updateNodeData,
 };

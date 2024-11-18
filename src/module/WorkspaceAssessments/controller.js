@@ -1,5 +1,6 @@
 const httpStatus = require("http-status");
 const catchAsync = require("../../utils/catchAsync");
+const ApiError = require("../../utils/ApiError");
 const pick = require("../../utils/pick");
 const workspaceAssessmentService = require("./service");
 
@@ -52,6 +53,28 @@ const updateAssessmentAnswer = catchAsync(async (req, res) => {
 	}
 	res.send(workspaceAssessment);
 });
+const updateAssessmentReport = catchAsync(async (req, res) => {
+	const workspaceAssessment = await workspaceAssessmentService.updateAssessmentReport(
+		req.params.workspaceAssessmentId,
+		req.body,
+	);
+	if (!workspaceAssessment.status) {
+		throw new ApiError(httpStatus.NOT_FOUND, workspaceAssessment.message);
+	}
+	res.send(workspaceAssessment);
+});
+const downloadAssessmentReport = catchAsync(async (req, res) => {
+	const {
+		params: { workspaceAssessmentId },
+	} = req;
+	const workspaceAssessment = await workspaceAssessmentService.downloadAssessmentReport(workspaceAssessmentId);
+	if (!workspaceAssessment.status) {
+		throw new ApiError(httpStatus.NOT_FOUND, workspaceAssessment.message);
+	}
+
+	res.setPdfHeaders(workspaceAssessment.data.fileName);
+	res.sendFile(workspaceAssessment.data.filePath);
+});
 
 module.exports = {
 	createWorkspaceAssessment,
@@ -60,4 +83,6 @@ module.exports = {
 	updateWorkspaceAssessment,
 	deleteWorkspaceAssessment,
 	updateAssessmentAnswer,
+	updateAssessmentReport,
+	downloadAssessmentReport,
 };

@@ -4,6 +4,7 @@ const bcrypt = require("bcryptjs");
 const { toJSON, paginate } = require("../../../utils/plugins");
 const { verify } = require("jsonwebtoken");
 const config = require("../../../config/config");
+const { isValidUrl } = require("../../../common/global.functions");
 
 const userSchema = mongoose.Schema(
 	{
@@ -90,7 +91,7 @@ const userSchema = mongoose.Schema(
 		toJSON: {
 			transform(doc, ret) {
 				if (ret.photoPath) {
-					const isUrl = /^(http|https):\/\/[^ "]+$/.test(ret.photoPath);
+					const isUrl = isValidUrl(ret.photoPath);
 					if (!isUrl) {
 						ret.photoPath = `${config.rootPath}${ret.photoPath}`;
 					}

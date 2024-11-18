@@ -47,7 +47,6 @@ const wireFrame = catchAsync(async (req, res) => {
 	const wireframe = await service.wireFrame(body);
 	res.status(httpStatus.OK).send(wireframe);
 });
-
 const createComment = catchAsync(async (req, res) => {
 	const { playbookId, stageId, nodeId, nodeDataId } = req.params;
 	const { user, body } = req;
@@ -59,7 +58,6 @@ const createComment = catchAsync(async (req, res) => {
 	const comment = await service.createComment(playbookId, stageId, nodeId, nodeDataId, body);
 	res.status(httpStatus.CREATED).send(comment);
 });
-
 const updateComment = catchAsync(async (req, res) => {
 	const { playbookId, stageId, nodeId, nodeDataId, commentId } = req.params;
 	const commentData = req.body;
@@ -67,14 +65,12 @@ const updateComment = catchAsync(async (req, res) => {
 	const comment = await service.updateComment(playbookId, stageId, nodeId, nodeDataId, commentId, commentData);
 	res.status(httpStatus.OK).send(comment);
 });
-
 const deleteComment = catchAsync(async (req, res) => {
 	const { playbookId, stageId, nodeId, nodeDataId, commentId } = req.params;
 
 	await service.deleteComment(playbookId, stageId, nodeId, nodeDataId, commentId);
 	res.status(httpStatus.NO_CONTENT).send();
 });
-
 const createReply = catchAsync(async (req, res) => {
 	const { playbookId, stageId, nodeId, nodeDataId, commentId } = req.params;
 	const { user, body } = req;
@@ -85,7 +81,6 @@ const createReply = catchAsync(async (req, res) => {
 	const reply = await service.createReply(playbookId, stageId, nodeId, nodeDataId, commentId, body);
 	res.status(httpStatus.CREATED).send(reply);
 });
-
 const updateReply = catchAsync(async (req, res) => {
 	const { playbookId, stageId, nodeId, nodeDataId, commentId, replyId } = req.params;
 	const replyData = req.body;
@@ -93,18 +88,31 @@ const updateReply = catchAsync(async (req, res) => {
 	const reply = await service.updateReply(playbookId, stageId, nodeId, nodeDataId, commentId, replyId, replyData);
 	res.status(httpStatus.OK).send(reply);
 });
-
 const deleteReply = catchAsync(async (req, res) => {
 	const { playbookId, stageId, nodeId, nodeDataId, commentId, replyId } = req.params;
 
 	await service.deleteReply(playbookId, stageId, nodeId, nodeDataId, commentId, replyId);
 	res.status(httpStatus.NO_CONTENT).send();
 });
-
 const simpleUpdate = catchAsync(async (req, res) => {
 	const { id } = req.params;
 	const updatedSitemap = await service.simpleUpdate(id, req.body);
 	res.status(httpStatus.OK).send(updatedSitemap);
+});
+const addNode = catchAsync(async (req, res) => {
+	const { playbookId, stageId } = req.params;
+	const newNode = await service.addNode(playbookId, stageId, req.body);
+	res.status(httpStatus.CREATED).send(newNode);
+});
+const addNodeData = catchAsync(async (req, res) => {
+	const { playbookId, stageId, nodeId } = req.params;
+	const newNodeData = await service.addNodeData(playbookId, stageId, nodeId, req.body);
+	res.status(httpStatus.CREATED).send(newNodeData);
+});
+const updateNodeData = catchAsync(async (req, res) => {
+	const { playbookId, stageId, nodeId, nodeDataId } = req.params;
+	const updatedNodeData = await service.updateNodeData(playbookId, stageId, nodeId, nodeDataId, req.body);
+	res.status(httpStatus.OK).send(updatedNodeData);
 });
 
 module.exports = {
@@ -122,4 +130,7 @@ module.exports = {
 	updateReply,
 	deleteReply,
 	simpleUpdate,
+	addNode,
+	addNodeData,
+	updateNodeData,
 };

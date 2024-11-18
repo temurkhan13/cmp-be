@@ -1,10 +1,16 @@
-const { handleStatus, isMarkdownDetected, makeAxiosCall } = require("../../common/global.functions.js");
+const {
+	handleStatus,
+	isMarkdownDetected,
+	makeAxiosCall,
+	removeFileByPath,
+	isFileExists,
+} = require("../../common/global.functions.js");
 const schema = require("../../common/schema.js");
 const config = require("../../config/config.js");
 const logger = require("../../config/logger.js");
 const Workspace = require("../workSpaces/entity/modal.js");
 const WorkspaceAssessment = require("./entity/model.js");
-const { generateAndConvertMarkdownToPDF } = require("./helper.js");
+const { generateAndConvertMarkdownToPDF, getUploadPath, generateSafePdfFilename } = require("./helper.js");
 
 const createWorkspaceAssessment = async (body) => {
 	const { folderId, name } = body;
@@ -39,13 +45,13 @@ const createWorkspaceAssessment = async (body) => {
 	const shouldGenerateReport = isMarkdownDetected(data.message);
 
 	if (shouldGenerateReport) {
-		const pdf = generateAndConvertMarkdownToPDF(data.message);
+		const pdf = await generateAndConvertMarkdownToPDF(data.message);
 
 		workspaceAssessment.report = {
 			isGenerated: true,
 			title: data.title || "Report Title",
 			content: data.message,
-			url: `/uploads/${pdf.fileName}`,
+			url: pdf.fileName,
 			generatedAt: new Date(),
 		};
 		workspaceAssessment.status = schema.workspaceAssessment.enums.assessmentStatus.COMPLETED;
@@ -161,13 +167,13 @@ const updateAssessmentAnswer = async (workspaceAssessmentId, body) => {
 	const shouldGenerateReport = isMarkdownDetected(data.message);
 
 	if (shouldGenerateReport) {
-		const pdf = generateAndConvertMarkdownToPDF(data.message);
+		const pdf = await generateAndConvertMarkdownToPDF(data.message);
 
 		updatedAssessment.report = {
 			isGenerated: true,
 			title: data.title || "Report Title",
 			content: data.message,
-			url: `/uploads/${pdf.fileName}`,
+			url: pdf.fileName,
 			generatedAt: new Date(),
 		};
 		updatedAssessment.status = schema.workspaceAssessment.enums.assessmentStatus.COMPLETED;
@@ -187,6 +193,74 @@ const updateAssessmentAnswer = async (workspaceAssessmentId, body) => {
 		message: "Answer updated successfully",
 	};
 };
+const updateAssessmentReport = async (workspaceAssessmentId, body) => {
+	const workspaceAssessment = await getWorkspaceAssessmentById(workspaceAssessmentId);
+	if (!workspaceAssessment) {
+		return handleStatus(false, "Workspace assessment not found!");
+	}
+
+	const { title, content } = body;
+	const oldReportUrl = workspaceAssessment.report?.url;
+	let newReportUrl;
+
+	if (title) {
+		workspaceAssessment.report.title = title;
+	}
+
+	if (content) {
+		const pdf = await generateAndConvertMarkdownToPDF(content);
+		if (pdf) {
+			newReportUrl = pdf.fileName;
+			workspaceAssessment.report.url = pdf.fileName;
+			workspaceAssessment.report.content = content;
+		}
+	}
+	workspaceAssessment.status = schema.workspaceAssessment.enums.assessmentStatus.COMPLETED;
+
+	const updatedAssessment = await workspaceAssessment.save();
+
+	if (oldReportUrl && oldReportUrl !== newReportUrl) {
+		const oldReportPath = getUploadPath(oldReportUrl);
+		removeFileByPath(oldReportPath);
+	}
+
+	return {
+		status: true,
+		data: updatedAssessment.report,
+		message: "Report updated successfully",
+	};
+};
+const downloadAssessmentReport = async (workspaceAssessmentId) => {
+	const workspaceAssessment = await getWorkspaceAssessmentById(workspaceAssessmentId);
+	if (!workspaceAssessment) {
+		return handleStatus(false, "Workspace assessment not found!");
+	}
+
+	const reportUrl = workspaceAssessment.report.url;
+	if (!reportUrl) {
+		return handleStatus(false, "Report not found!");
+	}
+
+	const reportPath = getUploadPath(reportUrl);
+
+	const _isFileExists = await isFileExists(reportPath);
+	if (!_isFileExists) {
+		return handleStatus(false, "Report file is missing");
+	}
+
+	const fileName = generateSafePdfFilename(workspaceAssessment.report.title || "assessment-report");
+	if (!fileName) {
+		return handleStatus(false, "Error generating file name");
+	}
+
+	return {
+		status: true,
+		data: {
+			fileName,
+			filePath: reportPath,
+		},
+	};
+};
 
 module.exports = {
 	createWorkspaceAssessment,
@@ -195,4 +269,6 @@ module.exports = {
 	updateWorkspaceAssessmentById,
 	deleteWorkspaceAssessmentById,
 	updateAssessmentAnswer,
+	updateAssessmentReport,
+	downloadAssessmentReport,
 };

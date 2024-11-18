@@ -1,4 +1,6 @@
 /* eslint-disable no-unused-vars */
+const fs = require("fs");
+const { promises: fsPromises } = require("fs");
 const axios = require("axios");
 const { ObjectId } = require("mongodb");
 const { info, error: _error } = require("../config/logger");
@@ -80,6 +82,26 @@ const isMarkdownDetected = (text) => {
 	const markdownPattern = /(```|#\s|-\s|\*\*|_\s|>\s)/;
 	return markdownPattern.test(text);
 };
+const isValidUrl = (url) => {
+	const urlPattern = /^(http|https):\/\/[^ "]+$/;
+	return urlPattern.test(url);
+};
+const removeFileByPath = (filePath) => {
+	try {
+		fs.unlinkSync(filePath);
+		info(`File ${filePath} has been removed successfully.`);
+	} catch (err) {
+		_error(`Error removing file ${filePath}: ${err.message}`);
+	}
+};
+const isFileExists = async (filePath) => {
+	try {
+		await fsPromises.access(filePath, fs.constants.F_OK);
+		return true;
+	} catch {
+		return false;
+	}
+};
 
 module.exports = {
 	isArrayWithLength,
@@ -93,4 +115,7 @@ module.exports = {
 	handleStatus,
 	deepMerge,
 	isMarkdownDetected,
+	isValidUrl,
+	removeFileByPath,
+	isFileExists,
 };

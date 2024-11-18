@@ -2,16 +2,33 @@ const mongoose = require("mongoose");
 const { paginate, toJSON } = require("../../../utils/plugins");
 const { workspaceAssessment } = require("../../../common/schema");
 const { mongoDuplicateKeyError } = require("../../../utils/mongoCustomHandlers");
+const config = require("../../../config/config");
+const { isValidUrl } = require("../../../common/global.functions");
 const Schema = mongoose.Schema;
 
-const reportSchema = new Schema({
-	_id: false,
-	isGenerated: { type: Boolean, default: false },
-	title: { type: String, default: "", trim: true },
-	content: { type: String, default: "" },
-	url: { type: String, default: "" },
-	generatedAt: { type: Date, default: null },
-});
+const reportSchema = new Schema(
+	{
+		_id: false,
+		isGenerated: { type: Boolean, default: false },
+		title: { type: String, default: "", trim: true },
+		content: { type: String, default: "" },
+		url: { type: String, default: "" },
+		generatedAt: { type: Date, default: null },
+	},
+	{
+		toJSON: {
+			transform(doc, ret) {
+				if (ret.url) {
+					const isUrl = isValidUrl(ret.url);
+					if (!isUrl) {
+						ret.url = `${config.rootPath}${ret.url}`;
+					}
+				}
+				return ret;
+			},
+		},
+	},
+);
 
 const qaSchema = new Schema({
 	question: { type: String, trim: true },

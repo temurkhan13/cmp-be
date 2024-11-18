@@ -3,6 +3,7 @@ const mongoose = require("mongoose");
 const Schema = mongoose.Schema;
 const { toJSON, paginate } = require("../../../utils/plugins");
 const config = require("../../../config/config");
+const { isValidUrl } = require("../../../common/global.functions");
 
 const ReplySchema = new Schema(
 	{
@@ -339,7 +340,7 @@ const entitySchema = new Schema(
 				delete ret._id;
 				delete ret.__v;
 				if (ret.image) {
-					const isUrl = /^(http|https):\/\/[^ "]+$/.test(ret.image);
+					const isUrl = isValidUrl(ret.image);
 					if (!isUrl) {
 						ret.image = `${config.rootPath}${ret.image}`;
 					}
