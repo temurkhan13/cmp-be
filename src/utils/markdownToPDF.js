@@ -1,108 +1,69 @@
 const fs = require("fs");
-const marked = require("marked");
-const htmlToPdfmake = require("html-to-pdfmake");
-const pdfmake = require("pdfmake");
-const jsdom = require("jsdom");
-const { JSDOM } = jsdom;
+const PDFDocument = require("pdfkit");
+const MarkdownIt = require("markdown-it");
 
-const virtualConsole = new jsdom.VirtualConsole();
-const dom = new JSDOM(`<!DOCTYPE html><html><body></body></html>`, {
-	virtualConsole,
-});
-const window = dom.window;
+const md = new MarkdownIt();
 
-const styles = {
-	h1: {
-		fontSize: 24,
-		color: "#2c6cd0",
-		alignment: "center",
-		margin: [0, 0, 0, 10],
-	},
-	h2: {
-		fontSize: 20,
-		color: "#2c6cd0",
-		margin: [0, 10, 0, 5],
-	},
-	p: {
-		fontSize: 12,
-		color: "#4a4a4a",
-		lineHeight: 1.6,
-		font: "Arial",
-	},
-	ul: {
-		margin: [20, 0, 0, 0],
-	},
-	li: {
-		fontSize: 12,
-		color: "#4a4a4a",
-		lineHeight: 1.6,
-	},
+const convertMarkdownToPdf = (markdown, outputPath) => {
+	// Extract markdown content from the input
+	const markdownContent = markdown.match(/```md([\s\S]*?)```/)[1].trim();
+
+	// Convert markdown to plain text while preserving lists and basic formatting
+	const cleanedContent = markdownContent
+		.replace(/!\[.*\]\(.*\)/g, "") // Remove image markdown
+		.replace(/\[([^\]]+)\]\(.*\)/g, "$1") // Remove links but keep the text
+		.replace(/^#+\s*(.*)/gm, "$1") // Keep header text but remove markdown symbols
+		.replace(/[*_~`]/g, "") // Remove formatting symbols but keep the text
+		.trim();
+
+	// Create a new PDF document
+	const doc = new PDFDocument();
+	doc.pipe(fs.createWriteStream(outputPath));
+
+	// Add cleaned plain text content to the PDF, preserving paragraph and list formatting
+	cleanedContent.split("\n").forEach((line) => {
+		if (line.trim().startsWith("- ") || line.trim().match(/^\d+\./)) {
+			doc.text(line.trim(), { indent: 20 }); // Indent list items
+		} else {
+			doc.text(line.trim());
+		}
+		doc.moveDown(0.5);
+	});
+
+	// Finalize the PDF and end the stream
+	doc.end();
 };
 
-const convertMarkdownToPDF = async (markdownContent, destPath) => {
-	try {
-		const html = marked.parse(markdownContent, {
-			gfm: true,
-			breaks: true,
-			smartLists: true,
-		});
+const convertMarkdownToPDF = (markdown, outputPath) => {
+	const doc = new PDFDocument();
+	doc.pipe(fs.createWriteStream(outputPath));
 
-		const pdfContent = htmlToPdfmake(html, { window });
+	const htmlContent = md.render(markdown).split("\n");
 
-		const docDefinition = {
-			content: pdfContent,
-			styles: styles,
-			defaultStyle: {
-				font: "Arial",
-			},
-			pageSize: "A4",
-			pageMargins: [56.7, 56.7, 56.7, 56.7],
-		};
+	htmlContent.forEach((line) => {
+		line = line.trim();
 
-		const fonts = {
-			Arial: {
-				normal: "Helvetica",
-				bold: "Helvetica-Bold",
-				italics: "Helvetica-Oblique",
-				bolditalics: "Helvetica-BoldOblique",
-			},
-		};
+		if (line.startsWith("- ") || line.match(/^\d+\./)) {
+			doc.text(line, { indent: 20 });
+		} else if (line.startsWith("<h1>") || line.startsWith("<h2>")) {
+			doc.fontSize(18).text(line.replace(/<\/?h[12]>/g, "").trim());
+			doc.moveDown();
+		} else if (line.startsWith("<h3>") || line.startsWith("<h4>")) {
+			doc.fontSize(14).text(line.replace(/<\/?h[34]>/g, "").trim());
+			doc.moveDown(0.5);
+		} else if (line.startsWith("<p>")) {
+			doc.fontSize(12).text(line.replace(/<\/?p>/g, "").trim());
+		} else if (line.includes("<img")) {
+			const altText = line.match(/alt="(.*?)"/);
+			doc.text(altText ? `[Image: ${altText[1]}]` : "[Image]");
+		} else {
+			doc.text(line);
+		}
 
-		const printer = new pdfmake(fonts);
-		const doc = printer.createPdfKitDocument(docDefinition);
+		doc.moveDown(0.5);
+	});
 
-		const writeStream = fs.createWriteStream(destPath);
-		doc.pipe(writeStream);
-
-		return new Promise((resolve, reject) => {
-			writeStream.on("finish", () => {
-				console.log(`PDF generated successfully at: ${destPath}`);
-				resolve(true);
-			});
-
-			writeStream.on("error", (error) => {
-				reject(error);
-			});
-
-			doc.end();
-		});
-	} catch (error) {
-		console.error("Error generating PDF:", error);
-		throw error;
-	}
+	doc.end();
 };
 
-const convertMarkdownFileToPDF = async (inputPath, outputPath) => {
-	try {
-		const markdownContent = fs.readFileSync(inputPath, "utf-8");
-		await convertMarkdownToPDF(markdownContent, outputPath);
-	} catch (error) {
-		console.error("Error reading markdown file:", error);
-		throw error;
-	}
-};
-
-module.exports = {
-	convertMarkdownToPDF,
-	convertMarkdownFileToPDF,
-};
+module.exports = { convertMarkdownToPdf, convertMarkdownToPDF };
