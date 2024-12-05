@@ -3,7 +3,7 @@ const ApiError = require("../../utils/ApiError");
 const DigitalPlaybook = require("./entity/modal");
 const config = require("../../config/config");
 const { default: axios } = require("axios");
-const { parseJsonIfPossible } = require("../../common/global.functions");
+const { parseJsonIfPossible, isArrayWithLength, deepMerge } = require("../../common/global.functions");
 
 const transformSpecificNodeData = (nodeData) => {
 	if (!Array.isArray(nodeData)) {
@@ -52,12 +52,14 @@ const transformResponse = (apiResponse) => {
 				}));
 		} else {
 			nodeData = Object.entries(messageObj)
-				.filter(([key, value]) => typeof value === "string" && value.length > 0)
+				.filter(
+					([key, value]) =>
+						typeof value === "string" &&
+						value !== "empty" &&
+						value.length > 0 &&
+						!["Discovery", "Adopt", "Deploy", "Design", "Run"].includes(key),
+				)
 				.map(([heading, description]) => ({ heading, description }));
-
-			// nodes = Object.entries(messageObj)
-			// 	.filter(([key, value]) => typeof value === "string" && value.length === 0)
-			// 	.map(([heading]) => ({ heading, description: "empty" }));
 
 			nodes = ["Discovery", "Adopt", "Deploy", "Design", "Run"].map((heading) => ({
 				heading,
@@ -434,6 +436,31 @@ const updateNodeData = async (playbookId, stageId, nodeId, nodeDataId, updateBod
 	await playbook.save();
 	return playbook;
 };
+const updateType = async (playbookId, stageId, type, typeId, updateBody) => {
+	const playbook = await DigitalPlaybook.findById(playbookId);
+	if (!playbook) {
+		throw new ApiError(httpStatus.NOT_FOUND, "Digital Playbook not found");
+	}
+
+	const stage = playbook.stages.find((s) => s._id.toString() === stageId);
+	if (!stage) {
+		throw new ApiError(httpStatus.NOT_FOUND, "Stage not found");
+	}
+
+	const typeData = stage[type].find((t) => t._id.toString() === typeId);
+	if (!typeData) {
+		throw new ApiError(httpStatus.NOT_FOUND, "Type not found");
+	}
+
+	if (type === "nodes" && isArrayWithLength(updateBody)) {
+		deepMerge(typeData.nodeData, updateBody);
+	} else {
+		Object.assign(typeData, updateBody);
+	}
+
+	await playbook.save();
+	return playbook;
+};
 
 module.exports = {
 	create,
@@ -453,4 +480,5 @@ module.exports = {
 	addNode,
 	addNodeData,
 	updateNodeData,
+	updateType,
 };

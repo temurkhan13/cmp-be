@@ -27,6 +27,7 @@ const CommentSchema = new mongoose.Schema(
 const nodeDataSchema = mongoose.Schema({
 	heading: { type: String },
 	description: { type: String },
+	color: { type: String },
 	comments: [CommentSchema],
 });
 

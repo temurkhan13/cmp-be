@@ -17,6 +17,7 @@ router.patch("/sitemap/simple-update/:id", controller.simpleUpdate);
 router.post("/:playbookId/stage/:stageId/nodes", auth(), controller.addNode);
 router.post("/:playbookId/stage/:stageId/nodes/:nodeId/nodeData", auth(), controller.addNodeData);
 router.patch("/:playbookId/stage/:stageId/nodes/:nodeId/nodeData/:nodeDataId", auth(), controller.updateNodeData);
+router.patch("/:playbookId/stage/:stageId/:type/:typeId", controller.updateType);
 
 router
 	.route("/sitemap/:playbookId/stage/:stageId/node/:nodeId/nodedata/:nodeDataId/comment/:commentId")

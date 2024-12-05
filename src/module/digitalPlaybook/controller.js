@@ -114,6 +114,11 @@ const updateNodeData = catchAsync(async (req, res) => {
 	const updatedNodeData = await service.updateNodeData(playbookId, stageId, nodeId, nodeDataId, req.body);
 	res.status(httpStatus.OK).send(updatedNodeData);
 });
+const updateType = catchAsync(async (req, res) => {
+	const { playbookId, stageId, type, typeId } = req.params;
+	const updatedType = await service.updateType(playbookId, stageId, type, typeId, req.body);
+	res.status(httpStatus.OK).send(updatedType);
+});
 
 module.exports = {
 	create,
@@ -133,4 +138,5 @@ module.exports = {
 	addNode,
 	addNodeData,
 	updateNodeData,
+	updateType,
 };
