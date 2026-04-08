@@ -3,6 +3,8 @@ const catchAsync = require("../../utils/catchAsync");
 const service = require("./service");
 const tokenService = require("../tokens/service");
 const pick = require("../../utils/pick");
+const { default: axios } = require("axios");
+const config = require("../../config/config");
 
 const create = catchAsync(async (req, res) => {
 	const { user, body } = req;
@@ -115,6 +117,20 @@ const inspireMe = catchAsync(async (req, res) => {
 	res.status(httpStatus.OK).send(text);
 });
 
+const ingest = catchAsync(async (req, res) => {
+	const { body, user } = req;
+	body.user_id = user._id;
+	const result = await axios.post(`${config.baseUrl}/ingest`, body);
+	res.status(httpStatus.OK).send(result.data);
+});
+
+const search = catchAsync(async (req, res) => {
+	const { body, user } = req;
+	body.user_id = user._id;
+	const result = await axios.post(`${config.baseUrl}/search`, body);
+	res.status(httpStatus.OK).send(result.data);
+});
+
 module.exports = {
 	create,
 	update,
@@ -133,4 +149,6 @@ module.exports = {
 	comprehensiveText,
 	autoText,
 	inspireMe,
+	ingest,
+	search,
 };

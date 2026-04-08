@@ -69,6 +69,8 @@ router.post(
 );
 router.post("/auto", auth(), checkSubscription({ checkWordLimit: true, wordCountField: "message" }), controller.autoText);
 router.post("/inspire-me", auth(), controller.inspireMe);
+router.route('/ingest').post(auth(), controller.ingest);
+router.route('/search').post(auth(), controller.search);
 
 module.exports = {
 	chatRoutes: router,
