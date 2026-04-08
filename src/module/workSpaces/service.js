@@ -483,7 +483,19 @@ const assistantChatUpdate = async (workspaceId, folderId, chatId, messageData) =
 				chat_id: chatId,
 			};
 			try {
-				await axios.post(`${config.baseUrl}/upload-files`, uploadBody);
+				const uploadResponse = await axios.post(`${config.baseUrl}/upload-files`, uploadBody);
+				// RAG ingest - best-effort, don't fail the request
+				try {
+					await axios.post(`${config.baseUrl}/ingest`, {
+						user_id: String(messageData.sender),
+						workspace_id: "",
+						folder_id: "",
+						filename: uploadBody.pdf_file,
+						content: uploadResponse.data.message || "",
+					});
+				} catch (e) {
+					console.log("RAG ingest skipped:", e.message);
+				}
 			} catch (error) {
 				throw new Error("AI server error");
 			}

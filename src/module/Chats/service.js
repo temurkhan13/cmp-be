@@ -32,6 +32,18 @@ const create = async (body) => {
 				user_id: body.user,
 				chat_id: chat.id,
 			});
+			// RAG ingest - best-effort, don't fail the request
+			try {
+				await axios.post(`${config.baseUrl}/ingest`, {
+					user_id: String(body.user),
+					workspace_id: "",
+					folder_id: "",
+					filename: pdfMessage.pdfPath,
+					content: gptResponse.data.message || "",
+				});
+			} catch (e) {
+				console.log("RAG ingest skipped:", e.message);
+			}
 			return gptResponse.data;
 		} catch (err) {
 			console.error("Failed to send data:", err);
@@ -73,6 +85,18 @@ const update = async (id, message, userId) => {
 				user_id: userId,
 				chat_id: id,
 			});
+			// RAG ingest - best-effort, don't fail the request
+			try {
+				await axios.post(`${config.baseUrl}/ingest`, {
+					user_id: String(userId),
+					workspace_id: "",
+					folder_id: "",
+					filename: message.pdfPath,
+					content: gptResponse.data.message || "",
+				});
+			} catch (e) {
+				console.log("RAG ingest skipped:", e.message);
+			}
 			return gptResponse.data;
 		} catch (err) {
 			console.error("Failed to send data:", err);
