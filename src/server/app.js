@@ -1,7 +1,7 @@
 const express = require("express");
 const helmet = require("helmet");
 const xss = require("xss-clean");
-const mongoSanitize = require("express-mongo-sanitize");
+// const mongoSanitize = require("express-mongo-sanitize"); // Removed — not needed with PostgreSQL
 const compression = require("compression");
 const cors = require("cors");
 const passport = require("passport");
@@ -35,7 +35,7 @@ app.use(express.json({ limit: "500mb" }));
 app.use(express.urlencoded({ limit: "500mb", extended: true }));
 app.use(express.urlencoded({ extended: true }));
 app.use(xss());
-app.use(mongoSanitize());
+// app.use(mongoSanitize()); // Removed — not needed with PostgreSQL
 app.use(compression());
 app.use(cors());
 app.options("*", cors());

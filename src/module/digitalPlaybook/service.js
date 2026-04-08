@@ -1,6 +1,7 @@
 const httpStatus = require("http-status");
 const ApiError = require("../../utils/ApiError");
-const DigitalPlaybook = require("./entity/modal");
+const supabase = require("../../config/supabase");
+const paginate = require("../../utils/paginate");
 const config = require("../../config/config");
 const { default: axios } = require("axios");
 const { parseJsonIfPossible, isArrayWithLength, deepMerge } = require("../../common/global.functions");
@@ -24,13 +25,13 @@ const transformSpecificNodeData = (nodeData) => {
 
 	return nodeData;
 };
+
 const transformResponse = (apiResponse) => {
 	const { _id, stages } = apiResponse;
 	const formattedStages = stages.map((stage) => {
 		const stageName = stage.stage;
 		const messageObj = parseJsonIfPossible(stage.response.message)[stageName];
 
-		// Transform nodeData for specific stages
 		let nodeData = [];
 		let nodes = [];
 
@@ -72,21 +73,120 @@ const transformResponse = (apiResponse) => {
 
 	return { id: _id, stages: formattedStages };
 };
+
+/**
+ * Helper: fetch a full playbook with stages, nodes, nodeData, comments, and replies
+ */
+const getFullPlaybook = async (playbookId) => {
+	const { data: playbook, error } = await supabase
+		.from("digital_playbooks")
+		.select("*")
+		.eq("id", playbookId)
+		.single();
+	if (error || !playbook) return null;
+
+	const { data: stages } = await supabase
+		.from("playbook_stages")
+		.select("*")
+		.eq("playbook_id", playbookId)
+		.order("created_at", { ascending: true });
+
+	playbook.stages = stages || [];
+
+	for (const stage of playbook.stages) {
+		const { data: nodes } = await supabase
+			.from("playbook_nodes")
+			.select("*")
+			.eq("stage_id", stage.id)
+			.order("created_at", { ascending: true });
+		stage.nodes = nodes || [];
+
+		const { data: stageNodeData } = await supabase
+			.from("playbook_stage_node_data")
+			.select("*")
+			.eq("stage_id", stage.id)
+			.order("created_at", { ascending: true });
+		stage.nodeData = stageNodeData || [];
+
+		for (const node of stage.nodes) {
+			const { data: nodeNodeData } = await supabase
+				.from("playbook_stage_node_data")
+				.select("*")
+				.eq("node_id", node.id)
+				.order("created_at", { ascending: true });
+			node.nodeData = nodeNodeData || [];
+		}
+
+		// Load comments for all nodeData entries (both stage-level and node-level)
+		const allNodeDataIds = [
+			...stage.nodeData.map((nd) => nd.id),
+			...stage.nodes.flatMap((n) => n.nodeData.map((nd) => nd.id)),
+		];
+
+		if (allNodeDataIds.length > 0) {
+			const { data: comments } = await supabase
+				.from("playbook_comments")
+				.select("*")
+				.in("node_data_id", allNodeDataIds)
+				.order("created_at", { ascending: true });
+
+			const commentIds = (comments || []).map((c) => c.id);
+			let replies = [];
+			if (commentIds.length > 0) {
+				const { data: repliesData } = await supabase
+					.from("playbook_comment_replies")
+					.select("*")
+					.in("comment_id", commentIds)
+					.order("created_at", { ascending: true });
+				replies = repliesData || [];
+			}
+
+			// Attach replies to comments
+			const commentsWithReplies = (comments || []).map((c) => ({
+				...c,
+				replies: replies.filter((r) => r.comment_id === c.id),
+			}));
+
+			// Attach comments to nodeData
+			const attachComments = (ndList) => {
+				for (const nd of ndList) {
+					nd.comments = commentsWithReplies.filter((c) => c.node_data_id === nd.id);
+				}
+			};
+			attachComments(stage.nodeData);
+			for (const node of stage.nodes) {
+				attachComments(node.nodeData);
+			}
+		}
+	}
+
+	return playbook;
+};
+
 const create = async (sitemapBody) => {
 	try {
-		sitemapBody.name = sitemapBody.sitemapName || "Initial Sitemap";
-		const sitemap = await DigitalPlaybook.create(sitemapBody);
+		const { data: playbook, error: insertError } = await supabase
+			.from("digital_playbooks")
+			.insert({
+				name: sitemapBody.sitemapName || "Initial Sitemap",
+				message: sitemapBody.message,
+				user_id: sitemapBody.userId,
+			})
+			.select()
+			.single();
+
+		if (insertError) throw new ApiError(httpStatus.BAD_REQUEST, insertError.message);
 
 		const initialBody = {
 			user_id: sitemapBody.userId,
-			chat_id: sitemap._id,
+			chat_id: playbook.id,
 			message: sitemapBody.message,
 			sitemap_name: sitemapBody.sitemapName,
 		};
 
 		let gptResponse = await axios.post(`${config.baseUrl}/sitemap`, initialBody);
 		const transformedResponse = transformResponse({
-			_id: sitemap._id,
+			_id: playbook.id,
 			stages: [
 				{
 					stage: sitemapBody.sitemapName,
@@ -95,57 +195,127 @@ const create = async (sitemapBody) => {
 			],
 		});
 
-		sitemap.stages = sitemap.stages || [];
-		sitemap.stages.push(...transformedResponse.stages);
-		await sitemap.save();
+		// Insert stages, nodes, and nodeData into child tables
+		for (const stageData of transformedResponse.stages) {
+			const { data: stage, error: stageError } = await supabase
+				.from("playbook_stages")
+				.insert({ playbook_id: playbook.id, stage: stageData.stage })
+				.select()
+				.single();
+			if (stageError) throw new ApiError(httpStatus.BAD_REQUEST, stageError.message);
 
-		return sitemap;
+			if (stageData.nodeData && stageData.nodeData.length > 0) {
+				const nodeDataRows = stageData.nodeData.map((nd) => ({
+					stage_id: stage.id,
+					node_id: null,
+					heading: nd.heading,
+					description: nd.description,
+				}));
+				await supabase.from("playbook_stage_node_data").insert(nodeDataRows);
+			}
+
+			if (stageData.nodes && stageData.nodes.length > 0) {
+				for (const nodeItem of stageData.nodes) {
+					const { data: node } = await supabase
+						.from("playbook_nodes")
+						.insert({ stage_id: stage.id, heading: nodeItem.heading })
+						.select()
+						.single();
+
+					if (node && nodeItem.nodeData && nodeItem.nodeData.length > 0) {
+						const subRows = nodeItem.nodeData.map((nd) => ({
+							stage_id: stage.id,
+							node_id: node.id,
+							heading: nd.heading,
+							description: nd.description,
+						}));
+						await supabase.from("playbook_stage_node_data").insert(subRows);
+					}
+				}
+			}
+		}
+
+		return await getFullPlaybook(playbook.id);
 	} catch (error) {
 		console.error("Failed to send data to AI server:", error.message);
 		throw new ApiError(httpStatus.BAD_REQUEST, "AI server error");
 	}
 };
+
 const querySitemaps = async (filter, options) => {
-	return await DigitalPlaybook.paginate(filter, options);
+	return await paginate("digital_playbooks", { ...options, filter }, supabase);
 };
+
 const getSitemap = async (id) => {
-	const sitemap = await DigitalPlaybook.findById(id);
-	console.log("sitemap", sitemap);
-	if (!sitemap) throw new ApiError(httpStatus.BAD_REQUEST, "sitemap not found!");
-	return sitemap;
+	const playbook = await getFullPlaybook(id);
+	if (!playbook) throw new ApiError(httpStatus.BAD_REQUEST, "sitemap not found!");
+	return playbook;
 };
+
 const deleteSitemap = async (id) => {
-	const sitemap = await DigitalPlaybook.findById(id);
-	console.log("sitemap", sitemap);
-	if (!sitemap) throw new ApiError(httpStatus.BAD_REQUEST, "sitemap not found!");
-	await sitemap.remove();
+	const { data: playbook, error } = await supabase
+		.from("digital_playbooks")
+		.select("id")
+		.eq("id", id)
+		.single();
+	if (error || !playbook) throw new ApiError(httpStatus.BAD_REQUEST, "sitemap not found!");
+
+	// Child tables should cascade-delete via FK, but delete explicitly for safety
+	const { data: stages } = await supabase
+		.from("playbook_stages")
+		.select("id")
+		.eq("playbook_id", id);
+	const stageIds = (stages || []).map((s) => s.id);
+
+	if (stageIds.length > 0) {
+		const { data: nodeDataRows } = await supabase
+			.from("playbook_stage_node_data")
+			.select("id")
+			.in("stage_id", stageIds);
+		const nodeDataIds = (nodeDataRows || []).map((nd) => nd.id);
+
+		if (nodeDataIds.length > 0) {
+			const { data: comments } = await supabase
+				.from("playbook_comments")
+				.select("id")
+				.in("node_data_id", nodeDataIds);
+			const commentIds = (comments || []).map((c) => c.id);
+
+			if (commentIds.length > 0) {
+				await supabase.from("playbook_comment_replies").delete().in("comment_id", commentIds);
+				await supabase.from("playbook_comments").delete().in("node_data_id", nodeDataIds);
+			}
+		}
+
+		await supabase.from("playbook_stage_node_data").delete().in("stage_id", stageIds);
+		await supabase.from("playbook_nodes").delete().in("stage_id", stageIds);
+		await supabase.from("playbook_stages").delete().eq("playbook_id", id);
+	}
+
+	await supabase.from("digital_playbooks").delete().eq("id", id);
 	return { message: "Card remove successfully" };
 };
+
 const updateSitemap = async (id, sitemapBody) => {
 	try {
-		// Step 1: Find the existing sitemap document
-		const sitemap = await DigitalPlaybook.findById(id);
-		if (!sitemap) throw new ApiError(httpStatus.BAD_REQUEST, "Sitemap not found");
+		const { data: playbook, error } = await supabase
+			.from("digital_playbooks")
+			.select("*")
+			.eq("id", id)
+			.single();
+		if (error || !playbook) throw new ApiError(httpStatus.BAD_REQUEST, "Sitemap not found");
 
-		console.log("sitemap", sitemap);
-
-		// Initial body for the request
 		const initialBody = {
 			user_id: sitemapBody.user,
-			chat_id: sitemap._id,
+			chat_id: playbook.id,
 			message: sitemapBody.message,
 			sitemap_name: sitemapBody.sitemapName,
 		};
 
-		console.log("Initial body:", initialBody);
-
-		// Step 2: Send the request to GPT
 		let gptResponse = await axios.post(`${config.baseUrl}/sitemap`, initialBody);
 
-		console.log("GPT response:", JSON.stringify(gptResponse.data, null, 2));
-
 		const transformedResponse = transformResponse({
-			_id: sitemap._id,
+			_id: playbook.id,
 			stages: [
 				{
 					stage: sitemapBody.sitemapName,
@@ -154,78 +324,146 @@ const updateSitemap = async (id, sitemapBody) => {
 			],
 		});
 
-		console.log("Transformed response:", JSON.stringify(transformedResponse, null, 2));
+		// Insert new stages and child data
+		for (const stageData of transformedResponse.stages) {
+			const { data: stage, error: stageError } = await supabase
+				.from("playbook_stages")
+				.insert({ playbook_id: playbook.id, stage: stageData.stage })
+				.select()
+				.single();
+			if (stageError) throw new ApiError(httpStatus.BAD_REQUEST, stageError.message);
 
-		sitemap.stages = sitemap.stages || [];
-		sitemap.stages.push(...transformedResponse.stages);
-		await sitemap.save();
+			if (stageData.nodeData && stageData.nodeData.length > 0) {
+				const nodeDataRows = stageData.nodeData.map((nd) => ({
+					stage_id: stage.id,
+					node_id: null,
+					heading: nd.heading,
+					description: nd.description,
+				}));
+				await supabase.from("playbook_stage_node_data").insert(nodeDataRows);
+			}
 
-		return sitemap;
+			if (stageData.nodes && stageData.nodes.length > 0) {
+				for (const nodeItem of stageData.nodes) {
+					const { data: node } = await supabase
+						.from("playbook_nodes")
+						.insert({ stage_id: stage.id, heading: nodeItem.heading })
+						.select()
+						.single();
+
+					if (node && nodeItem.nodeData && nodeItem.nodeData.length > 0) {
+						const subRows = nodeItem.nodeData.map((nd) => ({
+							stage_id: stage.id,
+							node_id: node.id,
+							heading: nd.heading,
+							description: nd.description,
+						}));
+						await supabase.from("playbook_stage_node_data").insert(subRows);
+					}
+				}
+			}
+		}
+
+		return await getFullPlaybook(playbook.id);
 	} catch (error) {
 		console.error("Failed to send data to AI server:", error.message);
 		throw new ApiError(httpStatus.BAD_REQUEST, "AI server error");
 	}
 };
+
 const updateSitemapFields = async (id, updateBody) => {
 	try {
-		const sitemap = await DigitalPlaybook.findById(id);
-		if (!sitemap) throw new ApiError(httpStatus.BAD_REQUEST, "Sitemap not found");
+		const playbook = await getFullPlaybook(id);
+		if (!playbook) throw new ApiError(httpStatus.BAD_REQUEST, "Sitemap not found");
 
 		for (const stageUpdate of updateBody.stages) {
-			const stage = sitemap.stages.id(stageUpdate._id);
+			const stage = playbook.stages.find((s) => s.id === stageUpdate._id);
 			if (!stage) {
 				throw new ApiError(httpStatus.BAD_REQUEST, "Stage not found");
 			}
 
-			// Update or add nodeData
+			// Update or add nodeData (stage-level)
 			for (const nodeDataUpdate of stageUpdate.nodeData) {
 				if (nodeDataUpdate._id) {
-					const nodeData = stage.nodeData.id(nodeDataUpdate._id);
-					if (nodeData) {
-						nodeData.heading = nodeDataUpdate.heading;
-						nodeData.description = nodeDataUpdate.description;
-					} else {
-						throw new ApiError(httpStatus.BAD_REQUEST, "NodeData not found");
-					}
+					// Update existing
+					const { error } = await supabase
+						.from("playbook_stage_node_data")
+						.update({
+							heading: nodeDataUpdate.heading,
+							description: nodeDataUpdate.description,
+						})
+						.eq("id", nodeDataUpdate._id);
+					if (error) throw new ApiError(httpStatus.BAD_REQUEST, "NodeData not found");
 				} else {
-					stage.nodeData.push({
+					// Insert new stage-level nodeData
+					await supabase.from("playbook_stage_node_data").insert({
+						stage_id: stage.id,
+						node_id: null,
 						heading: nodeDataUpdate.heading,
 						description: nodeDataUpdate.description,
 					});
 				}
 			}
 
-			// Update or add nodes if nodes are provided in the request body
+			// Update or add nodes
 			if (stageUpdate.nodes) {
 				for (const nodeUpdate of stageUpdate.nodes) {
 					if (nodeUpdate._id) {
-						const node = stage.nodes.id(nodeUpdate._id);
-						if (node) {
-							node.heading = nodeUpdate.heading;
-							node.nodeData = nodeUpdate.nodeData;
-						} else {
-							throw new ApiError(httpStatus.BAD_REQUEST, "Node not found");
+						const { error } = await supabase
+							.from("playbook_nodes")
+							.update({ heading: nodeUpdate.heading })
+							.eq("id", nodeUpdate._id);
+						if (error) throw new ApiError(httpStatus.BAD_REQUEST, "Node not found");
+
+						// If nodeData provided on the node update, replace node's nodeData
+						if (nodeUpdate.nodeData) {
+							// Delete old nodeData for this node
+							await supabase
+								.from("playbook_stage_node_data")
+								.delete()
+								.eq("node_id", nodeUpdate._id);
+							// Insert new
+							const rows = nodeUpdate.nodeData.map((nd) => ({
+								stage_id: stage.id,
+								node_id: nodeUpdate._id,
+								heading: nd.heading,
+								description: nd.description,
+							}));
+							if (rows.length > 0) {
+								await supabase.from("playbook_stage_node_data").insert(rows);
+							}
 						}
 					} else {
-						stage.nodes.push({
-							heading: nodeUpdate.heading,
-							nodeData: nodeUpdate.nodeData,
-						});
+						// Insert new node
+						const { data: newNode } = await supabase
+							.from("playbook_nodes")
+							.insert({ stage_id: stage.id, heading: nodeUpdate.heading })
+							.select()
+							.single();
+
+						if (newNode && nodeUpdate.nodeData && nodeUpdate.nodeData.length > 0) {
+							const rows = nodeUpdate.nodeData.map((nd) => ({
+								stage_id: stage.id,
+								node_id: newNode.id,
+								heading: nd.heading,
+								description: nd.description,
+							}));
+							await supabase.from("playbook_stage_node_data").insert(rows);
+						}
 					}
 				}
 			}
 		}
 
-		await sitemap.save();
-		return sitemap;
+		return await getFullPlaybook(id);
 	} catch (error) {
 		console.error("Error updating sitemap fields:", error.message);
 		throw new ApiError(httpStatus.BAD_REQUEST, "Error updating sitemap fields");
 	}
 };
+
 const wireFrame = async (wireframeBody) => {
 	try {
-		// Initial body for the first request
 		const initialBody = {
 			user_id: wireframeBody.userId,
 			chat_id: wireframeBody.chatId,
@@ -234,7 +472,6 @@ const wireFrame = async (wireframeBody) => {
 			playbook: wireframeBody.playbook,
 		};
 
-		// Send the request for the current stage
 		gptResponse = await axios.post(`${config.baseUrl}/wireframe`, initialBody);
 		const response = gptResponse.data;
 		return response;
@@ -243,223 +480,512 @@ const wireFrame = async (wireframeBody) => {
 		throw new ApiError(httpStatus.BAD_REQUEST, "AI server error");
 	}
 };
+
 const createComment = async (playbookId, stageId, nodeId, nodeDataId, commentData) => {
-	const playbook = await DigitalPlaybook.findById(playbookId);
-	if (!playbook) throw new ApiError(httpStatus.BAD_REQUEST, "Playbook not found");
+	try {
+		// Verify playbook exists
+		const { data: playbook } = await supabase
+			.from("digital_playbooks")
+			.select("id")
+			.eq("id", playbookId)
+			.single();
+		if (!playbook) throw new ApiError(httpStatus.BAD_REQUEST, "Playbook not found");
 
-	const stage = playbook.stages.id(stageId);
-	if (!stage) throw new ApiError(httpStatus.BAD_REQUEST, "Stage not found");
+		// Verify stage exists
+		const { data: stage } = await supabase
+			.from("playbook_stages")
+			.select("id")
+			.eq("id", stageId)
+			.eq("playbook_id", playbookId)
+			.single();
+		if (!stage) throw new ApiError(httpStatus.BAD_REQUEST, "Stage not found");
 
-	console.log("stage===", stage);
-	console.log("stage.nodes===", stage.nodes);
-	const node = nodeId ? stage.nodes.id(nodeId) : null;
-	console.log("node===", node);
+		// Verify nodeData exists
+		const { data: nodeData } = await supabase
+			.from("playbook_stage_node_data")
+			.select("id")
+			.eq("id", nodeDataId)
+			.single();
+		if (!nodeData) throw new ApiError(httpStatus.BAD_REQUEST, "Node data not found");
 
-	const nodeData = nodeId ? node.nodeData.id(nodeDataId) : stage.nodeData.id(nodeDataId);
-	console.log("nodeData===", nodeData);
-	if (!nodeData) throw new ApiError(httpStatus.BAD_REQUEST, "Node data not found");
+		const { data: comment, error } = await supabase
+			.from("playbook_comments")
+			.insert({
+				node_data_id: nodeDataId,
+				user_id: commentData.userId,
+				user_name: commentData.userName,
+				text: commentData.text,
+				status: commentData.status || null,
+			})
+			.select()
+			.single();
 
-	nodeData.comments.push(commentData);
-	await playbook.save();
-
-	return nodeData.comments[nodeData.comments.length - 1];
+		if (error) throw new ApiError(httpStatus.BAD_REQUEST, error.message);
+		return comment;
+	} catch (error) {
+		if (error instanceof ApiError) throw error;
+		throw new ApiError(httpStatus.BAD_REQUEST, error.message);
+	}
 };
+
 const updateComment = async (playbookId, stageId, nodeId, nodeDataId, commentId, commentData) => {
-	const playbook = await DigitalPlaybook.findById(playbookId);
-	if (!playbook) throw new ApiError(httpStatus.BAD_REQUEST, "Playbook not found");
+	try {
+		// Verify chain exists
+		const { data: playbook } = await supabase
+			.from("digital_playbooks")
+			.select("id")
+			.eq("id", playbookId)
+			.single();
+		if (!playbook) throw new ApiError(httpStatus.BAD_REQUEST, "Playbook not found");
 
-	const stage = playbook.stages.id(stageId);
-	if (!stage) throw new ApiError(httpStatus.BAD_REQUEST, "Stage not found");
+		const { data: stage } = await supabase
+			.from("playbook_stages")
+			.select("id")
+			.eq("id", stageId)
+			.eq("playbook_id", playbookId)
+			.single();
+		if (!stage) throw new ApiError(httpStatus.BAD_REQUEST, "Stage not found");
 
-	const node = nodeId ? stage.nodes.id(nodeId) : null;
-	const nodeData = nodeId ? node.nodeData.id(nodeDataId) : stage.nodeData.id(nodeDataId);
-	if (!nodeData) throw new ApiError(httpStatus.BAD_REQUEST, "Node data not found");
+		const { data: nodeData } = await supabase
+			.from("playbook_stage_node_data")
+			.select("id")
+			.eq("id", nodeDataId)
+			.single();
+		if (!nodeData) throw new ApiError(httpStatus.BAD_REQUEST, "Node data not found");
 
-	const comment = nodeData.comments.id(commentId);
-	if (!comment) throw new ApiError(httpStatus.BAD_REQUEST, "Comment not found");
+		const updateFields = {};
+		if (commentData.text !== undefined) updateFields.text = commentData.text;
+		if (commentData.status !== undefined) updateFields.status = commentData.status;
+		if (commentData.userName !== undefined) updateFields.user_name = commentData.userName;
 
-	Object.assign(comment, commentData);
-	await playbook.save();
+		const { data: comment, error } = await supabase
+			.from("playbook_comments")
+			.update(updateFields)
+			.eq("id", commentId)
+			.eq("node_data_id", nodeDataId)
+			.select()
+			.single();
 
-	return comment;
+		if (error || !comment) throw new ApiError(httpStatus.BAD_REQUEST, "Comment not found");
+		return comment;
+	} catch (error) {
+		if (error instanceof ApiError) throw error;
+		throw new ApiError(httpStatus.BAD_REQUEST, error.message);
+	}
 };
+
 const deleteComment = async (playbookId, stageId, nodeId, nodeDataId, commentId) => {
-	const playbook = await DigitalPlaybook.findById(playbookId);
-	if (!playbook) throw new ApiError(httpStatus.BAD_REQUEST, "Playbook not found");
+	try {
+		const { data: playbook } = await supabase
+			.from("digital_playbooks")
+			.select("id")
+			.eq("id", playbookId)
+			.single();
+		if (!playbook) throw new ApiError(httpStatus.BAD_REQUEST, "Playbook not found");
 
-	const stage = playbook.stages.id(stageId);
-	if (!stage) throw new ApiError(httpStatus.BAD_REQUEST, "Stage not found");
+		const { data: stage } = await supabase
+			.from("playbook_stages")
+			.select("id")
+			.eq("id", stageId)
+			.eq("playbook_id", playbookId)
+			.single();
+		if (!stage) throw new ApiError(httpStatus.BAD_REQUEST, "Stage not found");
 
-	const node = nodeId ? stage.nodes.id(nodeId) : null;
-	const nodeData = nodeId ? node.nodeData.id(nodeDataId) : stage.nodeData.id(nodeDataId);
-	if (!nodeData) throw new ApiError(httpStatus.BAD_REQUEST, "Node data not found");
+		const { data: nodeData } = await supabase
+			.from("playbook_stage_node_data")
+			.select("id")
+			.eq("id", nodeDataId)
+			.single();
+		if (!nodeData) throw new ApiError(httpStatus.BAD_REQUEST, "Node data not found");
 
-	const comment = nodeData.comments.id(commentId);
-	if (!comment) throw new ApiError(httpStatus.BAD_REQUEST, "Comment not found");
+		const { data: comment } = await supabase
+			.from("playbook_comments")
+			.select("id")
+			.eq("id", commentId)
+			.eq("node_data_id", nodeDataId)
+			.single();
+		if (!comment) throw new ApiError(httpStatus.BAD_REQUEST, "Comment not found");
 
-	comment.remove();
-	await playbook.save();
+		// Delete replies first, then comment
+		await supabase.from("playbook_comment_replies").delete().eq("comment_id", commentId);
+		await supabase.from("playbook_comments").delete().eq("id", commentId);
 
-	return { success: true };
+		return { success: true };
+	} catch (error) {
+		if (error instanceof ApiError) throw error;
+		throw new ApiError(httpStatus.BAD_REQUEST, error.message);
+	}
 };
+
 const createReply = async (playbookId, stageId, nodeId, nodeDataId, commentId, replyData) => {
-	const playbook = await DigitalPlaybook.findById(playbookId);
-	if (!playbook) throw new ApiError(httpStatus.BAD_REQUEST, "Playbook not found");
+	try {
+		const { data: playbook } = await supabase
+			.from("digital_playbooks")
+			.select("id")
+			.eq("id", playbookId)
+			.single();
+		if (!playbook) throw new ApiError(httpStatus.BAD_REQUEST, "Playbook not found");
 
-	const stage = playbook.stages.id(stageId);
-	if (!stage) throw new ApiError(httpStatus.BAD_REQUEST, "Stage not found");
+		const { data: stage } = await supabase
+			.from("playbook_stages")
+			.select("id")
+			.eq("id", stageId)
+			.eq("playbook_id", playbookId)
+			.single();
+		if (!stage) throw new ApiError(httpStatus.BAD_REQUEST, "Stage not found");
 
-	const node = nodeId ? stage.nodes.id(nodeId) : null;
-	const nodeData = nodeId ? node.nodeData.id(nodeDataId) : stage.nodeData.id(nodeDataId);
-	if (!nodeData) throw new ApiError(httpStatus.BAD_REQUEST, "Node data not found");
+		const { data: nodeData } = await supabase
+			.from("playbook_stage_node_data")
+			.select("id")
+			.eq("id", nodeDataId)
+			.single();
+		if (!nodeData) throw new ApiError(httpStatus.BAD_REQUEST, "Node data not found");
 
-	const comment = nodeData.comments.id(commentId);
-	if (!comment) throw new ApiError(httpStatus.BAD_REQUEST, "Comment not found");
+		const { data: comment } = await supabase
+			.from("playbook_comments")
+			.select("id")
+			.eq("id", commentId)
+			.eq("node_data_id", nodeDataId)
+			.single();
+		if (!comment) throw new ApiError(httpStatus.BAD_REQUEST, "Comment not found");
 
-	comment.replies.push(replyData);
-	await playbook.save();
+		const { data: reply, error } = await supabase
+			.from("playbook_comment_replies")
+			.insert({
+				comment_id: commentId,
+				user_id: replyData.userId,
+				user_name: replyData.userName,
+				text: replyData.text,
+			})
+			.select()
+			.single();
 
-	return comment.replies[comment.replies.length - 1];
+		if (error) throw new ApiError(httpStatus.BAD_REQUEST, error.message);
+		return reply;
+	} catch (error) {
+		if (error instanceof ApiError) throw error;
+		throw new ApiError(httpStatus.BAD_REQUEST, error.message);
+	}
 };
+
 const updateReply = async (playbookId, stageId, nodeId, nodeDataId, commentId, replyId, replyData) => {
-	const playbook = await DigitalPlaybook.findById(playbookId);
-	if (!playbook) throw new ApiError(httpStatus.BAD_REQUEST, "Playbook not found");
+	try {
+		const { data: playbook } = await supabase
+			.from("digital_playbooks")
+			.select("id")
+			.eq("id", playbookId)
+			.single();
+		if (!playbook) throw new ApiError(httpStatus.BAD_REQUEST, "Playbook not found");
 
-	const stage = playbook.stages.id(stageId);
-	if (!stage) throw new ApiError(httpStatus.BAD_REQUEST, "Stage not found");
+		const { data: stage } = await supabase
+			.from("playbook_stages")
+			.select("id")
+			.eq("id", stageId)
+			.eq("playbook_id", playbookId)
+			.single();
+		if (!stage) throw new ApiError(httpStatus.BAD_REQUEST, "Stage not found");
 
-	const node = nodeId ? stage.nodes.id(nodeId) : null;
-	const nodeData = nodeId ? node.nodeData.id(nodeDataId) : stage.nodeData.id(nodeDataId);
-	if (!nodeData) throw new ApiError(httpStatus.BAD_REQUEST, "Node data not found");
+		const { data: nodeData } = await supabase
+			.from("playbook_stage_node_data")
+			.select("id")
+			.eq("id", nodeDataId)
+			.single();
+		if (!nodeData) throw new ApiError(httpStatus.BAD_REQUEST, "Node data not found");
 
-	const comment = nodeData.comments.id(commentId);
-	if (!comment) throw new ApiError(httpStatus.BAD_REQUEST, "Comment not found");
+		const { data: comment } = await supabase
+			.from("playbook_comments")
+			.select("id")
+			.eq("id", commentId)
+			.eq("node_data_id", nodeDataId)
+			.single();
+		if (!comment) throw new ApiError(httpStatus.BAD_REQUEST, "Comment not found");
 
-	const reply = comment.replies.id(replyId);
-	if (!reply) throw new ApiError(httpStatus.BAD_REQUEST, "Reply not found");
+		const updateFields = {};
+		if (replyData.text !== undefined) updateFields.text = replyData.text;
+		if (replyData.userName !== undefined) updateFields.user_name = replyData.userName;
 
-	Object.assign(reply, replyData);
-	await playbook.save();
+		const { data: reply, error } = await supabase
+			.from("playbook_comment_replies")
+			.update(updateFields)
+			.eq("id", replyId)
+			.eq("comment_id", commentId)
+			.select()
+			.single();
 
-	return reply;
+		if (error || !reply) throw new ApiError(httpStatus.BAD_REQUEST, "Reply not found");
+		return reply;
+	} catch (error) {
+		if (error instanceof ApiError) throw error;
+		throw new ApiError(httpStatus.BAD_REQUEST, error.message);
+	}
 };
+
 const deleteReply = async (playbookId, stageId, nodeId, nodeDataId, commentId, replyId) => {
-	const playbook = await DigitalPlaybook.findById(playbookId);
-	if (!playbook) throw new ApiError(httpStatus.BAD_REQUEST, "Playbook not found");
+	try {
+		const { data: playbook } = await supabase
+			.from("digital_playbooks")
+			.select("id")
+			.eq("id", playbookId)
+			.single();
+		if (!playbook) throw new ApiError(httpStatus.BAD_REQUEST, "Playbook not found");
 
-	const stage = playbook.stages.id(stageId);
-	if (!stage) throw new ApiError(httpStatus.BAD_REQUEST, "Stage not found");
+		const { data: stage } = await supabase
+			.from("playbook_stages")
+			.select("id")
+			.eq("id", stageId)
+			.eq("playbook_id", playbookId)
+			.single();
+		if (!stage) throw new ApiError(httpStatus.BAD_REQUEST, "Stage not found");
 
-	const node = nodeId ? stage.nodes.id(nodeId) : null;
-	const nodeData = nodeId ? node.nodeData.id(nodeDataId) : stage.nodeData.id(nodeDataId);
-	if (!nodeData) throw new ApiError(httpStatus.BAD_REQUEST, "Node data not found");
+		const { data: nodeData } = await supabase
+			.from("playbook_stage_node_data")
+			.select("id")
+			.eq("id", nodeDataId)
+			.single();
+		if (!nodeData) throw new ApiError(httpStatus.BAD_REQUEST, "Node data not found");
 
-	const comment = nodeData.comments.id(commentId);
-	if (!comment) throw new ApiError(httpStatus.BAD_REQUEST, "Comment not found");
+		const { data: comment } = await supabase
+			.from("playbook_comments")
+			.select("id")
+			.eq("id", commentId)
+			.eq("node_data_id", nodeDataId)
+			.single();
+		if (!comment) throw new ApiError(httpStatus.BAD_REQUEST, "Comment not found");
 
-	const reply = comment.replies.id(replyId);
-	if (!reply) throw new ApiError(httpStatus.BAD_REQUEST, "Reply not found");
+		const { data: reply } = await supabase
+			.from("playbook_comment_replies")
+			.select("id")
+			.eq("id", replyId)
+			.eq("comment_id", commentId)
+			.single();
+		if (!reply) throw new ApiError(httpStatus.BAD_REQUEST, "Reply not found");
 
-	reply.remove();
-	await playbook.save();
-
-	return { success: true };
+		await supabase.from("playbook_comment_replies").delete().eq("id", replyId);
+		return { success: true };
+	} catch (error) {
+		if (error instanceof ApiError) throw error;
+		throw new ApiError(httpStatus.BAD_REQUEST, error.message);
+	}
 };
+
 const simpleUpdate = async (id, body) => {
-	const sitemap = await DigitalPlaybook.findById(id);
-	if (!sitemap) throw new ApiError(httpStatus.BAD_REQUEST, "Sitemap not found");
-	Object.assign(sitemap, body);
-	await sitemap.save();
-	return sitemap;
+	const { data: existing } = await supabase
+		.from("digital_playbooks")
+		.select("id")
+		.eq("id", id)
+		.single();
+	if (!existing) throw new ApiError(httpStatus.BAD_REQUEST, "Sitemap not found");
+
+	const updateFields = {};
+	if (body.name !== undefined) updateFields.name = body.name;
+	if (body.message !== undefined) updateFields.message = body.message;
+
+	const { data: updated, error } = await supabase
+		.from("digital_playbooks")
+		.update(updateFields)
+		.eq("id", id)
+		.select()
+		.single();
+
+	if (error) throw new ApiError(httpStatus.BAD_REQUEST, error.message);
+	return updated;
 };
+
 const addNode = async (playbookId, stageId, nodeBody) => {
-	const playbook = await DigitalPlaybook.findById(playbookId);
-	if (!playbook) {
-		throw new ApiError(httpStatus.NOT_FOUND, "Digital Playbook not found");
+	const { data: playbook } = await supabase
+		.from("digital_playbooks")
+		.select("id")
+		.eq("id", playbookId)
+		.single();
+	if (!playbook) throw new ApiError(httpStatus.NOT_FOUND, "Digital Playbook not found");
+
+	const { data: stage } = await supabase
+		.from("playbook_stages")
+		.select("id")
+		.eq("id", stageId)
+		.eq("playbook_id", playbookId)
+		.single();
+	if (!stage) throw new ApiError(httpStatus.NOT_FOUND, "Stage not found");
+
+	const { data: node, error } = await supabase
+		.from("playbook_nodes")
+		.insert({ stage_id: stageId, heading: nodeBody.heading })
+		.select()
+		.single();
+	if (error) throw new ApiError(httpStatus.BAD_REQUEST, error.message);
+
+	// Insert nodeData if provided
+	if (nodeBody.nodeData && nodeBody.nodeData.length > 0) {
+		const rows = nodeBody.nodeData.map((nd) => ({
+			stage_id: stageId,
+			node_id: node.id,
+			heading: nd.heading,
+			description: nd.description,
+		}));
+		await supabase.from("playbook_stage_node_data").insert(rows);
 	}
 
-	const stage = playbook.stages.find((s) => s._id.toString() === stageId);
-	if (!stage) {
-		throw new ApiError(httpStatus.NOT_FOUND, "Stage not found");
-	}
-
-	stage.nodes.push(nodeBody);
-	await playbook.save();
-	return playbook;
+	return await getFullPlaybook(playbookId);
 };
+
 const addNodeData = async (playbookId, stageId, nodeId, nodeDataBody) => {
-	const playbook = await DigitalPlaybook.findById(playbookId);
-	if (!playbook) {
-		throw new ApiError(httpStatus.NOT_FOUND, "Digital Playbook not found");
-	}
+	const { data: playbook } = await supabase
+		.from("digital_playbooks")
+		.select("id")
+		.eq("id", playbookId)
+		.single();
+	if (!playbook) throw new ApiError(httpStatus.NOT_FOUND, "Digital Playbook not found");
 
-	const stage = playbook.stages.find((s) => s._id.toString() === stageId);
-	if (!stage) {
-		throw new ApiError(httpStatus.NOT_FOUND, "Stage not found");
-	}
+	const { data: stage } = await supabase
+		.from("playbook_stages")
+		.select("id")
+		.eq("id", stageId)
+		.eq("playbook_id", playbookId)
+		.single();
+	if (!stage) throw new ApiError(httpStatus.NOT_FOUND, "Stage not found");
 
-	const node = stage.nodes.find((n) => n._id.toString() === nodeId);
-	if (!node) {
-		throw new ApiError(httpStatus.NOT_FOUND, "Node not found");
-	}
+	const { data: node } = await supabase
+		.from("playbook_nodes")
+		.select("id")
+		.eq("id", nodeId)
+		.eq("stage_id", stageId)
+		.single();
+	if (!node) throw new ApiError(httpStatus.NOT_FOUND, "Node not found");
 
-	node.nodeData.push(nodeDataBody);
-	await playbook.save();
-	return playbook;
+	await supabase.from("playbook_stage_node_data").insert({
+		stage_id: stageId,
+		node_id: nodeId,
+		heading: nodeDataBody.heading,
+		description: nodeDataBody.description,
+		color: nodeDataBody.color || null,
+	});
+
+	return await getFullPlaybook(playbookId);
 };
+
 const updateNodeData = async (playbookId, stageId, nodeId, nodeDataId, updateBody) => {
-	const playbook = await DigitalPlaybook.findById(playbookId);
-	if (!playbook) {
-		throw new ApiError(httpStatus.NOT_FOUND, "Digital Playbook not found");
-	}
+	const { data: playbook } = await supabase
+		.from("digital_playbooks")
+		.select("id")
+		.eq("id", playbookId)
+		.single();
+	if (!playbook) throw new ApiError(httpStatus.NOT_FOUND, "Digital Playbook not found");
 
-	const stage = playbook.stages.find((s) => s._id.toString() === stageId);
-	if (!stage) {
-		throw new ApiError(httpStatus.NOT_FOUND, "Stage not found");
-	}
+	const { data: stage } = await supabase
+		.from("playbook_stages")
+		.select("id")
+		.eq("id", stageId)
+		.eq("playbook_id", playbookId)
+		.single();
+	if (!stage) throw new ApiError(httpStatus.NOT_FOUND, "Stage not found");
 
-	const node = stage.nodes.find((n) => n._id.toString() === nodeId);
-	if (!node) {
-		throw new ApiError(httpStatus.NOT_FOUND, "Node not found");
-	}
+	const { data: node } = await supabase
+		.from("playbook_nodes")
+		.select("id")
+		.eq("id", nodeId)
+		.eq("stage_id", stageId)
+		.single();
+	if (!node) throw new ApiError(httpStatus.NOT_FOUND, "Node not found");
 
 	if (nodeDataId) {
-		const nodeData = node.nodeData.find((nd) => nd._id.toString() === nodeDataId);
-		if (!nodeData) {
-			throw new ApiError(httpStatus.NOT_FOUND, "NodeData not found");
-		}
-		Object.assign(nodeData, updateBody);
+		// Update specific nodeData entry
+		const updateFields = {};
+		if (updateBody.heading !== undefined) updateFields.heading = updateBody.heading;
+		if (updateBody.description !== undefined) updateFields.description = updateBody.description;
+		if (updateBody.color !== undefined) updateFields.color = updateBody.color;
+
+		const { error } = await supabase
+			.from("playbook_stage_node_data")
+			.update(updateFields)
+			.eq("id", nodeDataId)
+			.eq("node_id", nodeId);
+		if (error) throw new ApiError(httpStatus.NOT_FOUND, "NodeData not found");
 	} else {
-		Object.assign(node, updateBody);
+		// Update the node itself
+		const updateFields = {};
+		if (updateBody.heading !== undefined) updateFields.heading = updateBody.heading;
+
+		const { error } = await supabase
+			.from("playbook_nodes")
+			.update(updateFields)
+			.eq("id", nodeId);
+		if (error) throw new ApiError(httpStatus.BAD_REQUEST, error.message);
 	}
 
-	await playbook.save();
-	return playbook;
+	return await getFullPlaybook(playbookId);
 };
+
 const updateType = async (playbookId, stageId, type, typeId, updateBody) => {
-	const playbook = await DigitalPlaybook.findById(playbookId);
-	if (!playbook) {
-		throw new ApiError(httpStatus.NOT_FOUND, "Digital Playbook not found");
+	const { data: playbook } = await supabase
+		.from("digital_playbooks")
+		.select("id")
+		.eq("id", playbookId)
+		.single();
+	if (!playbook) throw new ApiError(httpStatus.NOT_FOUND, "Digital Playbook not found");
+
+	const { data: stage } = await supabase
+		.from("playbook_stages")
+		.select("id")
+		.eq("id", stageId)
+		.eq("playbook_id", playbookId)
+		.single();
+	if (!stage) throw new ApiError(httpStatus.NOT_FOUND, "Stage not found");
+
+	if (type === "nodes") {
+		const { data: node } = await supabase
+			.from("playbook_nodes")
+			.select("id")
+			.eq("id", typeId)
+			.eq("stage_id", stageId)
+			.single();
+		if (!node) throw new ApiError(httpStatus.NOT_FOUND, "Type not found");
+
+		if (isArrayWithLength(updateBody)) {
+			// updateBody is an array of nodeData updates - merge into existing nodeData
+			for (const ndUpdate of updateBody) {
+				if (ndUpdate._id || ndUpdate.id) {
+					const ndId = ndUpdate._id || ndUpdate.id;
+					const updateFields = {};
+					if (ndUpdate.heading !== undefined) updateFields.heading = ndUpdate.heading;
+					if (ndUpdate.description !== undefined) updateFields.description = ndUpdate.description;
+					if (ndUpdate.color !== undefined) updateFields.color = ndUpdate.color;
+					await supabase
+						.from("playbook_stage_node_data")
+						.update(updateFields)
+						.eq("id", ndId)
+						.eq("node_id", typeId);
+				}
+			}
+		} else {
+			// updateBody is a plain object - update the node heading
+			const updateFields = {};
+			if (updateBody.heading !== undefined) updateFields.heading = updateBody.heading;
+			if (Object.keys(updateFields).length > 0) {
+				await supabase.from("playbook_nodes").update(updateFields).eq("id", typeId);
+			}
+		}
+	} else if (type === "nodeData") {
+		// Stage-level nodeData
+		const { data: nd } = await supabase
+			.from("playbook_stage_node_data")
+			.select("id")
+			.eq("id", typeId)
+			.eq("stage_id", stageId)
+			.single();
+		if (!nd) throw new ApiError(httpStatus.NOT_FOUND, "Type not found");
+
+		const updateFields = {};
+		if (updateBody.heading !== undefined) updateFields.heading = updateBody.heading;
+		if (updateBody.description !== undefined) updateFields.description = updateBody.description;
+		if (updateBody.color !== undefined) updateFields.color = updateBody.color;
+
+		await supabase
+			.from("playbook_stage_node_data")
+			.update(updateFields)
+			.eq("id", typeId);
 	}
 
-	const stage = playbook.stages.find((s) => s._id.toString() === stageId);
-	if (!stage) {
-		throw new ApiError(httpStatus.NOT_FOUND, "Stage not found");
-	}
-
-	const typeData = stage[type].find((t) => t._id.toString() === typeId);
-	if (!typeData) {
-		throw new ApiError(httpStatus.NOT_FOUND, "Type not found");
-	}
-
-	if (type === "nodes" && isArrayWithLength(updateBody)) {
-		deepMerge(typeData.nodeData, updateBody);
-	} else {
-		Object.assign(typeData, updateBody);
-	}
-
-	await playbook.save();
-	return playbook;
+	return await getFullPlaybook(playbookId);
 };
 
 module.exports = {
