@@ -7,13 +7,13 @@
     "node": ">=12.0.0"
   },
   "scripts": {
-    "start": "pm2 start ecosystem.config.json",
+    "start": "node src/server/index.js",
     "dev": "cross-env NODE_ENV=development nodemon src/server/index.js",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "prettier": "prettier --check **/*.js",
     "prettier:fix": "prettier --write **/*.js",
-    "prepare": "husky install"
+    "prepare": "echo 'skipping husky'"
   },
   "dependencies": {
     "@sendgrid/mail": "^8.1.3",
