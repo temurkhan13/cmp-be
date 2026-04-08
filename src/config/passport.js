@@ -2,7 +2,7 @@ const { Strategy: JwtStrategy, ExtractJwt } = require("passport-jwt");
 const GoogleStrategy = require("passport-google-oauth20").Strategy;
 const config = require("./config");
 const { tokenTypes } = require("./tokens");
-const User = require("../module/users/entity/model");
+const supabase = require("./supabase");
 
 const jwtOptions = {
 	secretOrKey: config.jwt.secret,
@@ -13,11 +13,16 @@ const jwtVerify = async (payload, done) => {
 		if (payload.type !== tokenTypes.ACCESS) {
 			throw new Error("Invalid token type");
 		}
-		const user = await User.findById(payload.sub);
-		if (user) {
-			return done(null, user);
+		const { data: user, error } = await supabase
+			.from("users")
+			.select("*")
+			.eq("id", payload.sub)
+			.single();
+
+		if (error || !user) {
+			return done(null, false);
 		}
-		done(null, false);
+		return done(null, user);
 	} catch (error) {
 		done(error, false);
 	}
@@ -34,21 +39,30 @@ if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
 		},
 		async (accessToken, refreshToken, profile, done) => {
 			const newUser = {
-				googleId: profile.id,
-				firstName: profile.name.givenName,
-				lastName: profile.name.familyName,
-				photoPath: profile.photos[0].value,
+				google_id: profile.id,
+				first_name: profile.name.givenName,
+				last_name: profile.name.familyName,
+				photo_path: profile.photos[0].value,
 				email: profile.emails[0].value,
 			};
 
 			try {
-				let user = await User.findOne({ googleId: profile.id });
+				const { data: existing } = await supabase
+					.from("users")
+					.select("*")
+					.eq("google_id", profile.id)
+					.single();
 
-				if (user) {
-					done(null, user);
+				if (existing) {
+					done(null, existing);
 				} else {
-					user = await User.create(newUser);
-					done(null, user);
+					const { data: created, error } = await supabase
+						.from("users")
+						.insert(newUser)
+						.select()
+						.single();
+					if (error) throw error;
+					done(null, created);
 				}
 			} catch (err) {
 				console.error(err);
@@ -70,7 +84,16 @@ module.exports = (passport) => {
 		done(null, user.id);
 	});
 
-	passport.deserializeUser((id, done) => {
-		User.findById(id, (err, user) => done(err, user));
+	passport.deserializeUser(async (id, done) => {
+		try {
+			const { data: user, error } = await supabase
+				.from("users")
+				.select("*")
+				.eq("id", id)
+				.single();
+			done(error, user);
+		} catch (err) {
+			done(err, null);
+		}
 	});
 };
