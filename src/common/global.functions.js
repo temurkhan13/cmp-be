@@ -2,7 +2,6 @@
 const fs = require("fs");
 const { promises: fsPromises } = require("fs");
 const axios = require("axios");
-const { ObjectId } = require("mongodb");
 const { info, error: _error } = require("../config/logger");
 
 const isArrayWithLength = (arr) => Array.isArray(arr) && arr.length > 0;
@@ -33,21 +32,6 @@ const bearerToken = (token) => {
 	return {
 		Authorization: `Bearer ${token}`,
 	};
-};
-const createMongoDoc = (doc) => {
-	if (!doc) return;
-
-	const docObj = doc.toObject();
-	const { _id, createAt, updatedAt, ...rest } = docObj;
-
-	return rest;
-};
-const ObjectID = (idStr) => {
-	try {
-		return ObjectId.createFromHexString(idStr);
-	} catch (error) {
-		return null;
-	}
 };
 const parseJsonIfPossible = (obj) => {
 	if (!obj) return;
@@ -107,8 +91,6 @@ module.exports = {
 	isArrayWithLength,
 	makeAxiosCall,
 	bearerToken,
-	createMongoDoc,
-	ObjectID,
 	parseJsonIfPossible,
 	getURLParams,
 	capitalize,
