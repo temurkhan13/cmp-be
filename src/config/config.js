@@ -10,7 +10,8 @@ const envVarsSchema = Joi.object()
 		ROOT_PATH: Joi.string(),
 		BASE_URL: Joi.string().default("http://localhost:3000").description("Base URL"),
 		PORT: Joi.number().default(3000),
-		MONGODB_URL: Joi.string().required().description("Mongo DB url"),
+		SUPABASE_URL: Joi.string().required().description("Supabase project URL"),
+		SUPABASE_SERVICE_ROLE_KEY: Joi.string().required().description("Supabase service role key"),
 		JWT_SECRET: Joi.string().default("change-me-in-production").description("JWT secret key"),
 		JWT_ACCESS_EXPIRATION_MINUTES: Joi.number().default(90).description("minutes after which access tokens expire"),
 		JWT_REFRESH_EXPIRATION_DAYS: Joi.number().default(30).description("days after which refresh tokens expire"),
@@ -29,26 +30,16 @@ const envVarsSchema = Joi.object()
 const { value: envVars, error } = envVarsSchema.prefs({ errors: { label: "key" } }).validate(process.env);
 
 if (error) {
-	console.error(`Config validation warning: ${error.message}`);
-	// Only throw if MONGODB_URL is missing - that's truly required
-	if (!process.env.MONGODB_URL) {
-		throw new Error("MONGODB_URL is required to start the server");
-	}
+	throw new Error(`Config validation error: ${error.message}`);
 }
 
 module.exports = {
 	env: envVars.NODE_ENV,
 	rootPath: envVars.ROOT_PATH,
 	port: envVars.PORT,
-	mongoose: {
-		url: envVars.MONGODB_URL + (envVars.NODE_ENV === "test" ? "-test" : ""),
-		masterUrl: envVars.MONGODB_URL_MASTER + (envVars.NODE_ENV === "test" ? "-test" : ""),
-		options: {
-			useCreateIndex: true,
-			useNewUrlParser: true,
-			useUnifiedTopology: true,
-			useFindAndModify: false,
-		},
+	supabase: {
+		url: envVars.SUPABASE_URL,
+		serviceRoleKey: envVars.SUPABASE_SERVICE_ROLE_KEY,
 	},
 	jwt: {
 		secret: envVars.JWT_SECRET,

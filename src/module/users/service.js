@@ -1,245 +1,221 @@
 const httpStatus = require("http-status");
 const ApiError = require("../../utils/ApiError");
-const { tokenTypes } = require("../../config/tokens");
-const User = require("./entity/model");
-const Token = require("../tokens/entity/model");
 const bcrypt = require("bcryptjs");
-const {
-	// sendVerificationEmail,
-	// sendForgotPasswordEmail,
-} = require("../../utils/sendGridHelper");
 const { sendVerificationEmail, sendForgotPasswordEmail } = require("../../utils/emailService.js");
-const Workspace = require("../workSpaces/entity/modal.js");
-const UserSubscription = require("../UserSubscription/entity/model.js");
+const supabase = require("../../config/supabase");
+const paginate = require("../../utils/paginate");
 const workspaceService = require("../workSpaces/service.js");
 
 const generateVerificationCode = async () => {
-	let code = Math.floor(Math.random() * 1000000).toString(); // Generate a random number and convert to string
+	let code = Math.floor(Math.random() * 1000000).toString();
 	while (code.length < 6) {
-		code = "0" + code; // Pad with leading zeros if necessary
+		code = "0" + code;
 	}
 	return code;
 };
+
 const register = async (body) => {
-	if (await User.isEmailTaken(body.email)) {
+	// Check if email taken
+	const { data: existing } = await supabase.from("users").select("id").eq("email", body.email).single();
+	if (existing) {
 		throw new ApiError(httpStatus.BAD_REQUEST, "User already exists");
 	}
-	const user = await User.create(body);
-	// Generate a random 6 digit verification code
+
+	const hashedPassword = await bcrypt.hash(body.password, 8);
 	const verificationCode = await generateVerificationCode();
-	user.verificationCode["key"] = verificationCode;
-	await user.save();
-	// await sendVerificationEmail(user.email, verificationCode);
+
+	const { data: user, error } = await supabase.from("users").insert({
+		first_name: body.firstName,
+		last_name: body.lastName,
+		email: body.email,
+		password: hashedPassword,
+		company_name: body.companyName || null,
+		verification_code_key: parseInt(verificationCode),
+		verification_code_verify: false,
+	}).select().single();
+	if (error) throw error;
+
 	await sendVerificationEmail(user.email, verificationCode);
 	return user;
 };
 
 const verifyEmail = async (id, verificationCode) => {
-	const user = await getUser({ _id: id });
+	const user = await getUserById(id);
 	if (!user) {
 		throw new ApiError(httpStatus.BAD_REQUEST, "User not found.");
 	}
-
-	if (user.verificationCode["key"] !== verificationCode || user.verificationCode["key"] === null) {
+	if (user.verification_code_key !== parseInt(verificationCode) || user.verification_code_key === null) {
 		throw new ApiError(httpStatus.BAD_REQUEST, "Invalid verification Code");
 	}
 
-	user.verificationCode["key"] = null;
-	user.verificationCode["verify"] = true;
-	await workspaceService.createDefaultWorkspace(user._id);
-	await user.save();
+	const { error } = await supabase.from("users").update({
+		verification_code_key: null,
+		verification_code_verify: true,
+	}).eq("id", id);
+	if (error) throw error;
+
+	await workspaceService.createDefaultWorkspace(id);
 	return true;
 };
-/**
- * Login with username and password
- * @param {string} email
- * @param {string} password
- * @returns {Promise<User>}
- */
+
 const loginUserWithEmailAndPassword = async (email, password) => {
 	const user = await getUser({ email });
-	console.log(user, "user===========");
-	if (user && user.suspended) {
-		throw new ApiError(httpStatus.SERVICE_UNAVAILABLE, "Your account has been suspended, Please contact adminstration!");
-	}
-	// if (!user.verificationCode['verify']) {
-	//   throw new ApiError(
-	//     httpStatus.SERVICE_UNAVAILABLE,
-	//     'Your account is not verified! Check you email.'
-	//   );
-	// }
-	if (!user || !(await user.isPasswordMatch(password))) {
+	if (!user || !(await bcrypt.compare(password, user.password))) {
 		throw new ApiError(httpStatus.UNAUTHORIZED, "Incorrect email or password");
 	}
 	return user;
 };
 
-/**
- *
- * @param {*} filter
- * @returns {Promise<User>}
- */
 const getUser = async (filter) => {
-	return await User.findOne(filter);
+	let query = supabase.from("users").select();
+	if (filter.email) query = query.eq("email", filter.email);
+	if (filter._id || filter.id) query = query.eq("id", filter._id || filter.id);
+	const { data, error } = await query.single();
+	if (error) return null;
+	return data;
 };
 
 const getUserById = async (id) => {
-	return await User.findById(id);
+	const { data, error } = await supabase.from("users").select().eq("id", id).single();
+	if (error) return null;
+	return data;
 };
 
 const forgotPassword = async (email) => {
-	const user = await User.findOne({ email });
+	const { data: user } = await supabase.from("users").select().eq("email", email).single();
 	if (!user) {
 		throw new ApiError(httpStatus.BAD_REQUEST, "No user found");
 	}
 	const OTP = Math.floor(100000 + Math.random() * 900000);
-	user.OTP["key"] = OTP;
-	await user.save();
+	const { error } = await supabase.from("users").update({ otp_key: OTP }).eq("id", user.id);
+	if (error) throw error;
 	sendForgotPasswordEmail(email, OTP);
 	return OTP;
 };
+
 const resetPassword = async (body) => {
 	const { email, OTP, newPassword } = body;
-	const user = await User.findOne({ email });
+	const { data: user } = await supabase.from("users").select().eq("email", email).single();
 	if (!user) {
 		throw new ApiError(httpStatus.BAD_REQUEST, "No user found");
 	}
-	if (user.OTP["key"] !== OTP) {
+	if (user.otp_key !== OTP) {
 		throw new ApiError(httpStatus.BAD_REQUEST, "Invalid OTP");
 	}
-	user.password = newPassword;
-	user.OTP["key"] = null;
-	await user.save();
+	const hashedPassword = await bcrypt.hash(newPassword, 8);
+	const { error } = await supabase.from("users").update({
+		password: hashedPassword,
+		otp_key: null,
+	}).eq("id", user.id);
+	if (error) throw error;
 	return true;
 };
 
-/**
- * Logout
- * @param {string} refreshToken
- * @returns {Promise}
- */
 const logout = async (data) => {
-	let refreshToken = data.refreshToken;
-	const refreshTokenDoc = await Token.findOne({
-		token: refreshToken,
-		type: tokenTypes.REFRESH,
-		blacklisted: false,
-	});
-	if (!refreshTokenDoc) {
+	const { data: tokenDoc } = await supabase.from("tokens")
+		.select()
+		.eq("token", data.refreshToken)
+		.eq("type", "refresh")
+		.eq("blacklisted", false)
+		.single();
+	if (!tokenDoc) {
 		throw new ApiError(httpStatus.BAD_REQUEST, "No token found!");
 	}
-	await refreshTokenDoc.remove();
+	await supabase.from("tokens").delete().eq("id", tokenDoc.id);
 };
 
 const changePassword = async (body) => {
 	const { email, oldPassword, newPassword } = body;
-	const user = await User.findOne({ email: email });
+	const { data: user } = await supabase.from("users").select().eq("email", email).single();
 	if (!user) {
 		throw new ApiError(httpStatus.UNAUTHORIZED, "User with the email doesn't exists!");
 	}
-	const check = await user.isPasswordMatch(oldPassword);
+	const check = await bcrypt.compare(oldPassword, user.password);
 	if (!check) {
 		throw new ApiError(httpStatus.BAD_REQUEST, "Incorrect Old Password");
-	} else {
-		user.password = newPassword;
-		await user.save();
-		const updated = "Password Updated";
-		return updated;
 	}
+	const hashedPassword = await bcrypt.hash(newPassword, 8);
+	await supabase.from("users").update({ password: hashedPassword }).eq("id", user.id);
+	return "Password Updated";
 };
 
-/**
- *
- * @param {*} id
- * @param {*} body
- * @returns  {Promise<User>}
- */
 const updateUser = async (id, body) => {
 	const user = await getUserById(id);
 	if (!user) {
 		throw new ApiError(httpStatus.NOT_FOUND, "User not found");
 	}
-	Object.assign(user, body);
-	return await user.save();
+	const update = {};
+	if (body.firstName !== undefined) update.first_name = body.firstName;
+	if (body.lastName !== undefined) update.last_name = body.lastName;
+	if (body.companyName !== undefined) update.company_name = body.companyName;
+	if (body.photoPath !== undefined) update.photo_path = body.photoPath;
+	if (body.email !== undefined) update.email = body.email;
+
+	const { data, error } = await supabase.from("users").update(update).eq("id", id).select().single();
+	if (error) throw error;
+	return data;
 };
 
-/**
- *
- * @param {*} id
- * @returns  {Promise<User>}
- */
 const deleteUser = async (id) => {
-	const user = await getUser({ id });
+	const user = await getUserById(id);
 	if (!user) {
 		throw new ApiError(httpStatus.NOT_FOUND, "User not found");
 	}
-	await user.remove();
+	await supabase.from("users").delete().eq("id", id);
 };
 
 const queryUsers = async (filter, options) => {
-	return await User.paginate(filter, options);
+	const mapped = {};
+	if (filter.email) mapped.email = filter.email;
+	return paginate("users", { filter: mapped, ...options }, supabase);
 };
 
 const getUserSubscription = async (userId, subscriptionId) => {
-	const userSubscription = await UserSubscription.findById(subscriptionId).populate("subscription");
-	if (!userSubscription || userSubscription.subscriptionStatus !== "active") {
+	// Get user subscription with plan details
+	const { data: userSub } = await supabase.from("user_subscriptions")
+		.select("*, subscription:subscriptions(*)")
+		.eq("id", subscriptionId)
+		.single();
+
+	if (!userSub || userSub.subscription_status !== "active") {
 		throw new ApiError(httpStatus.FORBIDDEN, "Active subscription required");
 	}
-
-	if (!userSubscription.subscription) {
+	if (!userSub.subscription) {
 		throw new ApiError(httpStatus.FORBIDDEN, "Subscription not found");
 	}
 
-	const subscriptionStats = {};
+	const sub = userSub.subscription;
 
-	const subscription = userSubscription.subscription;
-	const workspaces = await Workspace.find({ userId });
+	// Count workspaces
+	const { count: workspaceCount } = await supabase.from("workspaces").select("*", { count: "exact", head: true }).eq("user_id", userId);
 
-	const workspaceCount = workspaces.length;
-	subscriptionStats.workspaces = {
-		used: workspaceCount,
-		total: subscription.workspaces,
+	// Count folders
+	const { data: workspaces } = await supabase.from("workspaces").select("id").eq("user_id", userId);
+	const wsIds = (workspaces || []).map((w) => w.id);
+
+	let folderCount = 0, sitemapCount = 0, wireframeCount = 0;
+	if (wsIds.length > 0) {
+		const { count: fc } = await supabase.from("folders").select("*", { count: "exact", head: true }).in("workspace_id", wsIds);
+		folderCount = fc || 0;
+
+		const { data: folders } = await supabase.from("folders").select("id").in("workspace_id", wsIds);
+		const fIds = (folders || []).map((f) => f.id);
+		if (fIds.length > 0) {
+			const { count: sc } = await supabase.from("folder_sitemap_references").select("*", { count: "exact", head: true }).in("folder_id", fIds);
+			sitemapCount = sc || 0;
+			const { count: wc } = await supabase.from("folder_wireframes").select("*", { count: "exact", head: true }).in("folder_id", fIds);
+			wireframeCount = wc || 0;
+		}
+	}
+
+	return {
+		workspaces: { used: workspaceCount || 0, total: sub.workspaces },
+		projects: { used: folderCount, total: sub.projects },
+		sitemaps: { used: sitemapCount, total: sub.sitemaps },
+		wireframes: { used: wireframeCount, total: sub.wireframes },
+		versionHistory: { used: 0, total: sub.version_history },
+		wordLimit: { used: userSub.words_used || 0, total: sub.word_limit },
 	};
-
-	const projectCount = workspaces.reduce((total, workspace) => total + workspace.folders.length, 0);
-	subscriptionStats.projects = {
-		used: projectCount,
-		total: subscription.projects,
-	};
-
-	const sitemapCount = workspaces.reduce(
-		(total, workspace) => total + workspace.folders.reduce((total, folder) => total + folder.sitemaps.length, 0),
-		0,
-	);
-	subscriptionStats.sitemaps = {
-		used: sitemapCount,
-		total: subscription.sitemaps,
-	};
-
-	const wireframeCount = workspaces.reduce(
-		(total, workspace) => total + workspace.folders.reduce((total, folder) => total + folder.wireframes.length, 0),
-		0,
-	);
-	subscriptionStats.wireframes = {
-		used: wireframeCount,
-		total: subscription.wireframes,
-	};
-
-	const versionHistoryCount = workspaces.reduce(
-		(total, workspace) => total + workspace.folders.reduce((total, folder) => total + folder.versionHistories?.length, 0),
-		0,
-	);
-	subscriptionStats.versionHistory = {
-		used: versionHistoryCount,
-		total: subscription.versionHistory,
-	};
-
-	subscriptionStats.wordLimit = {
-		used: userSubscription.wordsUsed,
-		total: subscription.wordLimit,
-	};
-
-	return subscriptionStats;
 };
 
 const sendVerificationEmailToUser = async (userId) => {
@@ -248,8 +224,7 @@ const sendVerificationEmailToUser = async (userId) => {
 		throw new ApiError(httpStatus.NOT_FOUND, "User not found");
 	}
 	const verificationCode = await generateVerificationCode();
-	user.verificationCode["key"] = verificationCode;
-	await user.save();
+	await supabase.from("users").update({ verification_code_key: parseInt(verificationCode) }).eq("id", userId);
 	await sendVerificationEmail(user.email, verificationCode);
 };
 

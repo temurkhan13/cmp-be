@@ -1,21 +1,31 @@
-const mongoose = require("mongoose");
-const http2 = require("http2");
-const fs = require("fs");
 const app = require("./app");
 const config = require("../config/config");
 const logger = require("../config/logger");
-const { syncPlansFromStripe } = require("../seeders/stripePlanSeeder");
+const supabase = require("../config/supabase");
 
-// Enable Mongoose debugging to log all MongoDB queries
 let server;
-// mongoose.set('debug', true);
-mongoose.connect(config.mongoose.url, config.mongoose.options).then(async () => {
-	logger.info("Connected to MongoDB");
-	server = app.listen(config.port, () => {
-		logger.info(`Listening to port ${config.port}`);
-		// syncPlansFromStripe();
-	});
-});
+
+// Verify Supabase connection
+const startServer = async () => {
+	try {
+		// Quick health check — query a simple table
+		const { error } = await supabase.from("roles").select("id", { count: "exact", head: true });
+		if (error) {
+			logger.warn(`Supabase connection warning: ${error.message}`);
+		} else {
+			logger.info("Connected to Supabase");
+		}
+
+		server = app.listen(config.port, () => {
+			logger.info(`Listening to port ${config.port}`);
+		});
+	} catch (err) {
+		logger.error(`Failed to start server: ${err.message}`);
+		process.exit(1);
+	}
+};
+
+startServer();
 
 const exitHandler = () => {
 	if (server) {

@@ -1,11 +1,11 @@
 const httpStatus = require("http-status");
 const ApiError = require("../../utils/ApiError");
-const Workspace = require("./entity/modal");
+const supabase = require("../../config/supabase");
+const paginate = require("../../utils/paginate");
 const { default: axios } = require("axios");
 const path = require("path");
 const config = require("../../config/config");
 const { convertMarkdownToPDF } = require("../../utils/markdownToPDF");
-const User = require("../users/entity/model");
 const { sendInviteEmail } = require("../../utils/emailService");
 const jwt = require("jsonwebtoken");
 const {
@@ -13,343 +13,401 @@ const {
 	isArrayWithLength,
 	deepMerge,
 	parseJsonIfPossible,
-	ObjectID,
 } = require("../../common/global.functions");
-const DigitalPlaybook = require("../digitalPlaybook/entity/modal");
 const { assignPageAndLayoutIndexes, formatQuestionsToString } = require("./helper");
 
+// ─── Workspace CRUD ──────────────────────────────────────────────
+
 const create = async (body) => {
-	const doc = await Workspace.create(body);
-	if (!doc) throw new ApiError(httpStatus.BAD_REQUEST, "something went wrong!");
-	return doc;
+	const { data, error } = await supabase
+		.from("workspaces")
+		.insert({
+			workspace_name: body.workspaceName,
+			workspace_description: body.workspaceDescription,
+			user_id: body.userId,
+			is_active: body.isActive ?? true,
+		})
+		.select()
+		.single();
+	if (error || !data) throw new ApiError(httpStatus.BAD_REQUEST, "something went wrong!");
+	return data;
 };
+
 const query = async (filter, options) => {
-	return await Workspace.paginate(filter, options);
+	const paginateFilter = {};
+	if (filter.userId) paginateFilter.user_id = filter.userId;
+	if (filter.isSoftDeleted !== undefined) paginateFilter.is_soft_deleted = filter.isSoftDeleted;
+	return await paginate("workspaces", { ...options, filter: paginateFilter }, supabase);
 };
+
 const get = async (id) => {
-	const doc = await Workspace.findOne({ _id: id, isSoftDeleted: false });
-	if (!doc) throw new ApiError(httpStatus.BAD_REQUEST, "No workspace found!");
-	return doc;
+	const { data, error } = await supabase
+		.from("workspaces")
+		.select("*")
+		.eq("id", id)
+		.eq("is_soft_deleted", false)
+		.single();
+	if (error || !data) throw new ApiError(httpStatus.BAD_REQUEST, "No workspace found!");
+	return data;
 };
+
 const update = async (id, updateBody) => {
-	const doc = await Workspace.findOne({ _id: id });
-	if (!doc) throw new ApiError(httpStatus.BAD_REQUEST, "No workspace found!");
-	Object.assign(doc, updateBody);
-	await doc.save();
-	return doc;
+	const mapped = {};
+	if (updateBody.workspaceName !== undefined) mapped.workspace_name = updateBody.workspaceName;
+	if (updateBody.workspaceDescription !== undefined) mapped.workspace_description = updateBody.workspaceDescription;
+	if (updateBody.isActive !== undefined) mapped.is_active = updateBody.isActive;
+	if (updateBody.isSoftDeleted !== undefined) mapped.is_soft_deleted = updateBody.isSoftDeleted;
+
+	const { data, error } = await supabase
+		.from("workspaces")
+		.update(mapped)
+		.eq("id", id)
+		.select()
+		.single();
+	if (error || !data) throw new ApiError(httpStatus.BAD_REQUEST, "No workspace found!");
+	return data;
 };
+
 const deleteWorkspace = async (id) => {
-	const doc = await Workspace.findOne({ _id: id });
-	if (!doc) throw new ApiError(httpStatus.BAD_REQUEST, "No workspace found!");
-	if (doc.workspaceName === "Default Workspace")
+	const { data: ws } = await supabase.from("workspaces").select("workspace_name").eq("id", id).single();
+	if (!ws) throw new ApiError(httpStatus.BAD_REQUEST, "No workspace found!");
+	if (ws.workspace_name === "Default Workspace")
 		throw new ApiError(httpStatus.BAD_REQUEST, "Cannot delete Default workspace!");
-	await doc.remove();
+
+	const { error } = await supabase.from("workspaces").delete().eq("id", id);
+	if (error) throw new ApiError(httpStatus.BAD_REQUEST, error.message);
 	return { success: true, message: "Workspace deleted successfully" };
 };
+
+// ─── Folder CRUD ─────────────────────────────────────────────────
+
 const createFolder = async (workspaceId, folder) => {
 	try {
-		const workspace = await Workspace.findById(workspaceId);
-		if (!workspace) throw new ApiError(httpStatus.BAD_REQUEST, "Workspace not found!");
+		// Verify workspace exists
+		const { data: ws } = await supabase.from("workspaces").select("id").eq("id", workspaceId).single();
+		if (!ws) throw new ApiError(httpStatus.BAD_REQUEST, "Workspace not found!");
 
-		workspace.folders.push(folder);
-		await workspace.save();
-
-		const folders = workspace.folders;
-		return workspace.folders[folders.length - 1];
+		const { data, error } = await supabase
+			.from("folders")
+			.insert({
+				workspace_id: workspaceId,
+				folder_name: folder.folderName,
+				is_active: folder.isActive ?? false,
+			})
+			.select()
+			.single();
+		if (error) throw new ApiError(httpStatus.BAD_REQUEST, error.message);
+		return data;
 	} catch (error) {
+		if (error instanceof ApiError) throw error;
 		throw new ApiError(httpStatus.BAD_REQUEST, `Error creating folder: ${error.message}`);
 	}
 };
+
 const updateFolder = async (workspaceId, folderId, updateBody) => {
 	try {
-		const workspace = await Workspace.findOne({
-			_id: workspaceId,
-			"folders._id": folderId,
-		});
-		if (!workspace) {
-			throw new ApiError(httpStatus.BAD_REQUEST, "Workspace or Folder not found!");
-		}
+		const { data: folder } = await supabase
+			.from("folders")
+			.select("*")
+			.eq("id", folderId)
+			.eq("workspace_id", workspaceId)
+			.single();
+		if (!folder) throw new ApiError(httpStatus.BAD_REQUEST, "Workspace or Folder not found!");
 
-		const folder = workspace.folders.id(folderId);
-
+		// If setting this folder active, deactivate others in same workspace
 		if (updateBody.isActive === true) {
-			workspace.folders.forEach((folder) => {
-				if (folder._id.toString() !== folderId && folder.isActive) {
-					folder.isActive = false;
-				}
-			});
+			await supabase
+				.from("folders")
+				.update({ is_active: false })
+				.eq("workspace_id", workspaceId)
+				.neq("id", folderId)
+				.eq("is_active", true);
 		}
 
-		Object.assign(folder, updateBody);
-		await workspace.save();
+		const mapped = {};
+		if (updateBody.folderName !== undefined) mapped.folder_name = updateBody.folderName;
+		if (updateBody.isActive !== undefined) mapped.is_active = updateBody.isActive;
+		if (updateBody.isSoftDeleted !== undefined) mapped.is_soft_deleted = updateBody.isSoftDeleted;
 
-		return folder;
+		const { data, error } = await supabase
+			.from("folders")
+			.update(mapped)
+			.eq("id", folderId)
+			.select()
+			.single();
+		if (error) throw new ApiError(httpStatus.BAD_REQUEST, error.message);
+		return data;
 	} catch (error) {
+		if (error instanceof ApiError) throw error;
 		throw new ApiError(httpStatus.BAD_REQUEST, `Error updating folder: ${error.message}`);
 	}
 };
+
 const deleteFolder = async (workspaceId, folderId) => {
 	try {
-		const updatedWorkspace = await Workspace.findOneAndUpdate(
-			{
-				_id: workspaceId,
-				"folders._id": folderId,
-			},
-			{
-				$pull: {
-					folders: { _id: folderId },
-				},
-			},
-			{ new: true },
-		);
+		const { data } = await supabase
+			.from("folders")
+			.select("id")
+			.eq("id", folderId)
+			.eq("workspace_id", workspaceId)
+			.single();
+		if (!data) throw new ApiError(httpStatus.BAD_REQUEST, "Workspace or Folder not found!");
 
-		if (!updatedWorkspace) {
-			throw new ApiError(httpStatus.BAD_REQUEST, "Workspace or Folder not found!");
-		}
-
+		const { error } = await supabase.from("folders").delete().eq("id", folderId);
+		if (error) throw new ApiError(httpStatus.BAD_REQUEST, error.message);
 		return { success: true, message: "Folder deleted successfully" };
 	} catch (error) {
+		if (error instanceof ApiError) throw error;
 		throw new ApiError(httpStatus.BAD_REQUEST, `Error deleting folder: ${error.message}`);
 	}
 };
+
+// ─── Chat CRUD ───────────────────────────────────────────────────
+
 const assistantChat = async (workspaceId, folderId) => {
 	try {
-		// Find the workspace and folder
-		const workspace = await Workspace.findOne({
-			_id: workspaceId,
-			"folders._id": folderId,
-		});
-		if (!workspace) {
-			throw new ApiError(httpStatus.BAD_REQUEST, "Workspace or Folder not found!");
-		}
-		const chat = {
-			chatTitle: "New Chat",
-		};
-		const result = await Workspace.findOneAndUpdate(
-			{ _id: workspaceId, "folders._id": folderId },
-			{ $push: { "folders.$.chats": chat } },
-			{ new: true },
-		);
-		return result;
+		// Verify folder belongs to workspace
+		const { data: folder } = await supabase
+			.from("folders")
+			.select("id")
+			.eq("id", folderId)
+			.eq("workspace_id", workspaceId)
+			.single();
+		if (!folder) throw new ApiError(httpStatus.BAD_REQUEST, "Workspace or Folder not found!");
+
+		const { data: chat, error } = await supabase
+			.from("folder_chats")
+			.insert({
+				folder_id: folderId,
+				chat_title: "New Chat",
+			})
+			.select()
+			.single();
+		if (error) throw new ApiError(httpStatus.BAD_REQUEST, error.message);
+		return chat;
 	} catch (error) {
+		if (error instanceof ApiError) throw error;
 		throw new Error(`Error creating chat: ${error.message}`);
 	}
 };
+
 const getAssistantChat = async (workspaceId, folderId, chatId) => {
 	try {
-		const workspace = await Workspace.findOne({
-			_id: workspaceId,
-			"folders._id": folderId,
-			"folders.chats._id": chatId,
-		});
+		// Verify folder in workspace
+		const { data: folder } = await supabase
+			.from("folders")
+			.select("id")
+			.eq("id", folderId)
+			.eq("workspace_id", workspaceId)
+			.single();
+		if (!folder) throw new ApiError(httpStatus.BAD_REQUEST, "Workspace, Folder, or chat not found!");
 
-		if (!workspace) {
-			throw new ApiError(httpStatus.BAD_REQUEST, "Workspace, Folder, or chat not found!");
-		}
+		const { data: chat } = await supabase
+			.from("folder_chats")
+			.select("*")
+			.eq("id", chatId)
+			.eq("folder_id", folderId)
+			.single();
+		if (!chat) throw new ApiError(httpStatus.BAD_REQUEST, "Chat not found!");
+		if (chat.is_soft_deleted) throw new ApiError(httpStatus.NOT_FOUND, "Chat is soft-deleted and not available.");
 
-		const folder = workspace.folders.find((folder) => folder._id.toString() === folderId);
-		if (!folder) {
-			throw new ApiError(httpStatus.BAD_REQUEST, "Folder not found!");
-		}
+		// Fetch messages
+		const { data: messages } = await supabase
+			.from("folder_chat_messages")
+			.select("*")
+			.eq("chat_id", chatId)
+			.order("created_at", { ascending: true });
 
-		const chat = folder.chats.find((chat) => chat._id.toString() === chatId);
-		if (!chat) {
-			throw new ApiError(httpStatus.BAD_REQUEST, "Chat not found!");
-		}
-
-		if (chat.isSoftDeleted) {
-			throw new ApiError(httpStatus.NOT_FOUND, "Chat is soft-deleted and not available.");
-		}
-
+		chat.generalMessages = messages || [];
 		return chat;
 	} catch (error) {
+		if (error instanceof ApiError) throw error;
 		throw new ApiError(httpStatus.BAD_REQUEST, `Error retrieving chat: ${error.message}`);
 	}
 };
+
 const generateInviteLink = (workspaceId, folderId, chatId, email) => {
 	const inviteToken = jwt.sign(
 		{ workspaceId, folderId, chatId, email },
 		process.env.JWT_SECRET,
-		{ expiresIn: "7d" }, // Token is valid for 7 days
+		{ expiresIn: "7d" },
 	);
-
 	const inviteLink = `${config.frontendUrl}/invite?token=${inviteToken}`;
 	return inviteLink;
 };
+
 const shareChat = async (workspaceId, folderId, chatId, userIdToShare) => {
-	const workspace = await Workspace.findOne({
-		_id: workspaceId,
-		"folders._id": folderId,
-		"folders.chats._id": chatId,
-	});
+	// Verify chat exists
+	const { data: chat } = await supabase
+		.from("folder_chats")
+		.select("id, folder_id")
+		.eq("id", chatId)
+		.single();
+	if (!chat) throw new ApiError(httpStatus.NOT_FOUND, "Workspace, Folder, or Chat not found!");
 
-	if (!workspace) {
-		throw new ApiError(httpStatus.NOT_FOUND, "Workspace, Folder, or Chat not found!");
-	}
+	// Check if user already shared
+	const { data: existing } = await supabase
+		.from("folder_chat_shared_users")
+		.select("id")
+		.eq("chat_id", chatId)
+		.eq("user_id", userIdToShare)
+		.maybeSingle();
+	if (existing) throw new ApiError(httpStatus.BAD_REQUEST, "User already has access to this chat.");
 
-	const chat = workspace.folders.id(folderId).chats.id(chatId);
+	// Get user email
+	const { data: user } = await supabase
+		.from("users")
+		.select("id, email")
+		.eq("id", userIdToShare)
+		.single();
+	if (!user) throw new ApiError(httpStatus.NOT_FOUND, "User not found!");
 
-	if (!chat) {
-		throw new ApiError(httpStatus.NOT_FOUND, "Chat not found!");
-	}
-
-	if (chat.sharedUsers.includes(userIdToShare)) {
-		throw new ApiError(httpStatus.BAD_REQUEST, "User already has access to this chat.");
-	}
-
-	const user = await User.findById(userIdToShare);
-	const inviteLink = await generateInviteLink(workspaceId, folderId, chatId, user.email);
-
+	const inviteLink = generateInviteLink(workspaceId, folderId, chatId, user.email);
 	await sendInviteEmail(user.email, inviteLink);
-	// chat.sharedUsers.push(userIdToShare);
 
-	await workspace.save();
-	await User.findByIdAndUpdate(userIdToShare, {
-		$push: {
-			sharedChats: { workspaceId, folderId, chatId },
-		},
+	// Add to user_shared_chats
+	await supabase.from("user_shared_chats").insert({
+		user_id: userIdToShare,
+		workspace_id: workspaceId,
+		folder_id: folderId,
+		chat_id: chatId,
 	});
 
 	return chat;
 };
+
 const acceptChatInvite = async (token) => {
 	try {
 		const decoded = jwt.verify(token, config.jwt.secret);
-
 		const { workspaceId, folderId, chatId, email } = decoded;
-		const user = await User.findOne({ email });
 
-		if (!user) {
-			throw new ApiError(httpStatus.BAD_REQUEST, "User not found");
-		}
+		const { data: user } = await supabase
+			.from("users")
+			.select("id")
+			.eq("email", email)
+			.single();
+		if (!user) throw new ApiError(httpStatus.BAD_REQUEST, "User not found");
 
-		// Find the workspace first to locate the folder and chat
-		const workspace = await Workspace.findOne({
-			_id: workspaceId,
-			"folders._id": folderId,
-			"folders.chats._id": chatId,
+		// Verify chat exists
+		const { data: chat } = await supabase
+			.from("folder_chats")
+			.select("id")
+			.eq("id", chatId)
+			.single();
+		if (!chat) throw new ApiError(httpStatus.NOT_FOUND, "Workspace or chat not found");
+
+		// Add shared user
+		await supabase.from("folder_chat_shared_users").insert({
+			chat_id: chatId,
+			user_id: user.id,
 		});
 
-		if (!workspace) {
-			throw new ApiError(httpStatus.NOT_FOUND, "Workspace or chat not found");
-		}
+		const { data: updatedChat } = await supabase
+			.from("folder_chats")
+			.select("*, folder_chat_shared_users(*)")
+			.eq("id", chatId)
+			.single();
 
-		// Use the positional operator to target the correct folder
-		const folderIndex = workspace.folders.findIndex((folder) => folder._id.toString() === folderId);
-
-		const chatIndex = workspace.folders[folderIndex].chats.findIndex((chat) => chat._id.toString() === chatId);
-
-		if (chatIndex === -1) {
-			throw new ApiError(httpStatus.NOT_FOUND, "Chat not found");
-		}
-
-		// Push the user to the sharedUsers array
-		workspace.folders[folderIndex].chats[chatIndex].sharedUsers.push({
-			userId: user._id,
-		});
-
-		// Save the workspace with the updated shared users
-		await workspace.save();
-
-		// Retrieve the updated chat to return
-		const updatedChat = workspace.folders[folderIndex].chats[chatIndex];
-
-		// Return the updated chat
 		return { success: true, chat: updatedChat };
 	} catch (error) {
+		if (error instanceof ApiError) throw error;
 		throw new ApiError(httpStatus.BAD_REQUEST, `Error accepting invite: ${error.message}`);
 	}
 };
+
 const deleteAssistantChat = async (workspaceId, folderId, chatId) => {
 	try {
-		const workspace = await Workspace.findOne({
-			_id: workspaceId,
-			"folders._id": folderId,
-			"folders.chats._id": chatId,
-		});
+		const { data: folder } = await supabase
+			.from("folders")
+			.select("id")
+			.eq("id", folderId)
+			.eq("workspace_id", workspaceId)
+			.single();
+		if (!folder) throw new ApiError(httpStatus.BAD_REQUEST, "Workspace, Folder, or Chat not found!");
 
-		if (!workspace) {
-			throw new ApiError(httpStatus.BAD_REQUEST, "Workspace, Folder, or Chat not found!");
-		}
+		const { data: chat } = await supabase
+			.from("folder_chats")
+			.select("id, is_soft_deleted")
+			.eq("id", chatId)
+			.eq("folder_id", folderId)
+			.single();
+		if (!chat) throw new ApiError(httpStatus.BAD_REQUEST, "Chat not found!");
 
-		const folder = workspace.folders.id(folderId);
-
-		if (!folder) {
-			throw new ApiError(httpStatus.BAD_REQUEST, "Folder not found!");
-		}
-
-		const chat = folder.chats.id(chatId);
-
-		if (!chat) {
-			throw new ApiError(httpStatus.BAD_REQUEST, "Chat not found!");
-		}
-
-		if (chat.isSoftDeleted) {
-			chat.remove();
-			await workspace.save();
-
-			return {
-				success: true,
-				message: "Chat permanently deleted",
-			};
+		if (chat.is_soft_deleted) {
+			await supabase.from("folder_chats").delete().eq("id", chatId);
+			return { success: true, message: "Chat permanently deleted" };
 		} else {
-			chat.isSoftDeleted = true;
-			await workspace.save();
-
-			return {
-				success: true,
-				message: "Chat soft deleted. Please make another request to permanently delete.",
-			};
+			await supabase.from("folder_chats").update({ is_soft_deleted: true }).eq("id", chatId);
+			return { success: true, message: "Chat soft deleted. Please make another request to permanently delete." };
 		}
 	} catch (error) {
+		if (error instanceof ApiError) throw error;
 		throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, `Error deleting chat: ${error.message}`);
 	}
 };
+
 const assistantChatUpdate = async (workspaceId, folderId, chatId, messageData) => {
 	try {
-		const workspace = await Workspace.findOne({
-			_id: workspaceId,
-			"folders._id": folderId,
-		});
-		if (!workspace) {
-			throw new ApiError(httpStatus.BAD_REQUEST, "Workspace or Folder not found!");
-		}
+		const { data: folder } = await supabase
+			.from("folders")
+			.select("id, workspace_id")
+			.eq("id", folderId)
+			.eq("workspace_id", workspaceId)
+			.single();
+		if (!folder) throw new ApiError(httpStatus.BAD_REQUEST, "Workspace or Folder not found!");
 
-		const folder = workspace.folders.id(folderId);
+		// Get workspace userId for AI calls
+		const { data: workspace } = await supabase
+			.from("workspaces")
+			.select("user_id")
+			.eq("id", workspaceId)
+			.single();
 
 		if (chatId === "newChat") {
-			const chat = {
-				chatTitle: "New Chat",
-				media: messageData.media || [],
-				documents: messageData.documents || [],
-				generalMessages: [
-					{
-						text: messageData.text,
-						sender: messageData.sender,
-						from: "user",
-						pdfPath: messageData.pdfPath,
-					},
-				],
-			};
+			// Create new chat
+			const { data: newChat, error: chatErr } = await supabase
+				.from("folder_chats")
+				.insert({ folder_id: folderId, chat_title: "New Chat" })
+				.select()
+				.single();
+			if (chatErr) throw new ApiError(httpStatus.BAD_REQUEST, chatErr.message);
 
-			const result = await Workspace.findOneAndUpdate(
-				{ _id: workspaceId, "folders._id": folderId },
-				{ $push: { "folders.$.chats": chat } },
-				{ new: true },
-			);
+			// Insert user message
+			const { data: userMsg } = await supabase
+				.from("folder_chat_messages")
+				.insert({
+					chat_id: newChat.id,
+					text: messageData.text,
+					sender_id: messageData.sender,
+					from: "user",
+					pdf_path: messageData.pdfPath || null,
+				})
+				.select()
+				.single();
 
-			const updatedChatFolder = result.folders.id(folderId);
-
-			if (!updatedChatFolder) {
-				throw new ApiError(httpStatus.BAD_REQUEST, "Folder not found!");
+			// Insert media/documents if present
+			if (isArrayWithLength(messageData.media)) {
+				const mediaRows = messageData.media.map((m) => ({
+					chat_id: newChat.id,
+					file_name: m.name || m.fileName,
+					url: m.url,
+				}));
+				await supabase.from("folder_chat_media").insert(mediaRows);
 			}
-
-			const chats = updatedChatFolder.chats;
-			const newChat = chats[chats.length - 1];
+			if (isArrayWithLength(messageData.documents)) {
+				const docRows = messageData.documents.map((d) => ({
+					chat_id: newChat.id,
+					file_name: d.name || d.fileName,
+					name: d.name,
+					date: d.date || null,
+					size: d.size || null,
+				}));
+				await supabase.from("folder_chat_documents").insert(docRows);
+			}
 
 			const body = {
 				user_id: messageData.sender,
-				chat_id: newChat._id,
+				chat_id: newChat.id,
 				message: messageData.text,
 				history: "",
 			};
@@ -358,17 +416,16 @@ const assistantChatUpdate = async (workspaceId, folderId, chatId, messageData) =
 
 			if (Object.keys(chatFromAI).length > 0) {
 				if (chatFromAI.message) {
-					newChat.generalMessages.push({
+					await supabase.from("folder_chat_messages").insert({
+						chat_id: newChat.id,
 						text: chatFromAI.message,
 						from: "ai",
 					});
 				}
-
 				if (chatFromAI.title) {
-					newChat.chatTitle = chatFromAI.title;
+					await supabase.from("folder_chats").update({ chat_title: chatFromAI.title }).eq("id", newChat.id);
+					newChat.chat_title = chatFromAI.title;
 				}
-
-				await result.save();
 			}
 
 			return {
@@ -379,566 +436,477 @@ const assistantChatUpdate = async (workspaceId, folderId, chatId, messageData) =
 			};
 		}
 
-		const chat = folder.chats.id(chatId);
+		// Existing chat
+		const { data: chat } = await supabase
+			.from("folder_chats")
+			.select("id")
+			.eq("id", chatId)
+			.eq("folder_id", folderId)
+			.single();
+		if (!chat) throw new ApiError(httpStatus.BAD_REQUEST, "Chat not found!");
 
-		if (!chat) {
-			throw new ApiError(httpStatus.BAD_REQUEST, "Chat not found!");
-		}
-
-		const newMessage = {
+		// Insert user message
+		await supabase.from("folder_chat_messages").insert({
+			chat_id: chatId,
 			text: messageData.text,
-			sender: messageData.sender,
+			sender_id: messageData.sender,
 			from: "user",
-			pdfPath: messageData.pdfPath,
-		};
+			pdf_path: messageData.pdfPath || null,
+		});
 
 		const isMedia = isArrayWithLength(messageData.media);
 		const isDocument = isArrayWithLength(messageData.documents);
 
 		if (isMedia) {
-			chat.media.push(...messageData.media);
+			const mediaRows = messageData.media.map((m) => ({
+				chat_id: chatId,
+				file_name: m.name || m.fileName,
+				url: m.url,
+			}));
+			await supabase.from("folder_chat_media").insert(mediaRows);
 		}
-
 		if (isDocument) {
-			chat.documents.push(...messageData.documents);
+			const docRows = messageData.documents.map((d) => ({
+				chat_id: chatId,
+				file_name: d.name || d.fileName,
+				name: d.name,
+				date: d.date || null,
+				size: d.size || null,
+			}));
+			await supabase.from("folder_chat_documents").insert(docRows);
 		}
-
-		chat.generalMessages.push(newMessage);
-		// chat.markModified("generalMessages");
-
-		await workspace.save();
 
 		if (isMedia || isDocument) {
-			const body = {
+			const uploadBody = {
 				pdf_file: messageData?.media?.at(0) || messageData?.documents?.at(0),
 				user_id: messageData.sender,
-				chat_id: chat._id,
+				chat_id: chatId,
 			};
 			try {
-				await axios.post(`${config.baseUrl}/upload-files`, body);
+				await axios.post(`${config.baseUrl}/upload-files`, uploadBody);
 			} catch (error) {
 				throw new Error("AI server error");
 			}
 		}
 
-		const textMessages = chat.generalMessages.filter((msg) => msg.text).map((msg) => msg.text);
-		const body = {
+		// Fetch all text messages for history
+		const { data: allMessages } = await supabase
+			.from("folder_chat_messages")
+			.select("text")
+			.eq("chat_id", chatId)
+			.not("text", "is", null)
+			.order("created_at", { ascending: true });
+
+		const textMessages = (allMessages || []).map((m) => m.text);
+
+		const aiBody = {
 			user_id: messageData.sender,
-			chat_id: chat._id,
+			chat_id: chatId,
 			message: messageData.text,
 			history: textMessages,
 		};
 
 		try {
-			const gptResponse = await axios.post(`${config.baseUrl}/chat`, body);
-			const gptMessage = {
-				text: gptResponse.data.message,
-				from: "ai",
-			};
+			const gptResponse = await axios.post(`${config.baseUrl}/chat`, aiBody);
+
+			const { data: aiMsg } = await supabase
+				.from("folder_chat_messages")
+				.insert({
+					chat_id: chatId,
+					text: gptResponse.data.message,
+					from: "ai",
+				})
+				.select()
+				.single();
 
 			if (gptResponse.data?.title) {
-				chat.chatTitle = gptResponse.data.title;
+				await supabase.from("folder_chats").update({ chat_title: gptResponse.data.title }).eq("id", chatId);
 			}
 
-			chat.generalMessages.push(gptMessage);
-			await workspace.save();
-			const newChat = chat.generalMessages[chat.generalMessages.length - 1].toObject();
+			const result = { ...aiMsg };
 
-			if (newChat && (isMedia || isDocument)) {
+			if (result && (isMedia || isDocument)) {
 				const pdfPath = messageData?.media?.at(0) || messageData?.documents?.at(0);
 				pdfPath.url = `${config.rootPath}${pdfPath.name || pdfPath.url}`;
-				newChat.file = pdfPath;
+				result.file = pdfPath;
 			}
 
-			return newChat;
+			return result;
 		} catch (error) {
 			throw new Error("AI server error");
 		}
 	} catch (error) {
+		if (error instanceof ApiError) throw error;
 		throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, error.message);
 	}
 };
+
 const getChatMedia = async (workspaceId, folderId, chatId) => {
 	try {
-		const workspace = await Workspace.findOne({
-			_id: workspaceId,
-			"folders._id": folderId,
-			"folders.chats._id": chatId,
-		});
+		// Verify hierarchy
+		const { data: folder } = await supabase
+			.from("folders")
+			.select("id")
+			.eq("id", folderId)
+			.eq("workspace_id", workspaceId)
+			.single();
+		if (!folder) throw new ApiError(httpStatus.NOT_FOUND, "Workspace, Folder, or Chat not found!");
 
-		if (!workspace) {
-			throw new ApiError(httpStatus.NOT_FOUND, "Workspace, Folder, or Chat not found!");
-		}
+		const { data: chat } = await supabase
+			.from("folder_chats")
+			.select("id")
+			.eq("id", chatId)
+			.eq("folder_id", folderId)
+			.single();
+		if (!chat) throw new ApiError(httpStatus.NOT_FOUND, "Chat not found!");
 
-		const folder = workspace.folders.id(folderId);
-		const chat = folder.chats.id(chatId);
-
-		// const media = chat.generalMessages.flatMap((message) => message.media);
-		return chat.media;
+		const { data: media } = await supabase
+			.from("folder_chat_media")
+			.select("*")
+			.eq("chat_id", chatId);
+		return media || [];
 	} catch (error) {
+		if (error instanceof ApiError) throw error;
 		throw new ApiError(httpStatus.NOT_FOUND, `error getting chat media: ${error.message}`);
 	}
 };
+
 const getChatLinks = async (workspaceId, folderId, chatId) => {
 	try {
-		const workspace = await Workspace.findOne({
-			_id: workspaceId,
-			"folders._id": folderId,
-			"folders.chats._id": chatId,
-		});
+		const { data: folder } = await supabase
+			.from("folders")
+			.select("id")
+			.eq("id", folderId)
+			.eq("workspace_id", workspaceId)
+			.single();
+		if (!folder) throw new ApiError(httpStatus.NOT_FOUND, "Workspace, Folder, or Chat not found!");
 
-		if (!workspace) {
-			throw new ApiError(httpStatus.NOT_FOUND, "Workspace, Folder, or Chat not found!");
-		}
+		const { data: chat } = await supabase
+			.from("folder_chats")
+			.select("id")
+			.eq("id", chatId)
+			.eq("folder_id", folderId)
+			.single();
+		if (!chat) throw new ApiError(httpStatus.NOT_FOUND, "Chat not found!");
 
-		const folder = workspace.folders.id(folderId);
-		const chat = folder.chats.id(chatId);
-
-		// const links = chat.generalMessages.flatMap((message) => message.links);
-		return chat.links;
+		const { data: links } = await supabase
+			.from("folder_chat_links")
+			.select("*")
+			.eq("chat_id", chatId);
+		return links || [];
 	} catch (error) {
+		if (error instanceof ApiError) throw error;
 		throw new ApiError(httpStatus.NOT_FOUND, `error getting chat links: ${error.message}`);
 	}
 };
+
 const getChatDocuments = async (workspaceId, folderId, chatId) => {
 	try {
-		const workspace = await Workspace.findOne({
-			_id: workspaceId,
-			"folders._id": folderId,
-			"folders.chats._id": chatId,
-		});
+		const { data: folder } = await supabase
+			.from("folders")
+			.select("id")
+			.eq("id", folderId)
+			.eq("workspace_id", workspaceId)
+			.single();
+		if (!folder) throw new ApiError(httpStatus.NOT_FOUND, "Workspace, Folder, or Chat not found!");
 
-		if (!workspace) {
-			throw new ApiError(httpStatus.NOT_FOUND, "Workspace, Folder, or Chat not found!");
-		}
+		const { data: chat } = await supabase
+			.from("folder_chats")
+			.select("id")
+			.eq("id", chatId)
+			.eq("folder_id", folderId)
+			.single();
+		if (!chat) throw new ApiError(httpStatus.NOT_FOUND, "Chat not found!");
 
-		const folder = workspace.folders.id(folderId);
-		const chat = folder.chats.id(chatId);
-
-		// const documents = chat.flatMap((message) => message.documents);
-		return chat.documents;
+		const { data: documents } = await supabase
+			.from("folder_chat_documents")
+			.select("*")
+			.eq("chat_id", chatId);
+		return documents || [];
 	} catch (error) {
+		if (error instanceof ApiError) throw error;
 		throw new ApiError(httpStatus.NOT_FOUND, `error getting chat documents: ${error.message}`);
 	}
 };
+
+// ─── Comments (polymorphic: chat / assessment / wireframe) ───────
+
+const _getCommentsTable = (contextType) => {
+	if (contextType === "chat") return "folder_chat_comments";
+	if (contextType === "assessment") return "folder_assessment_comments";
+	if (contextType === "wireframe") return "folder_wireframe_comments";
+	return null;
+};
+
 const createComment = async (
 	workspaceId,
 	folderId,
-	contextId, // chatId or assessmentId or wireframeId
-	messageId, // Unique ID for either a message or a question/answer
+	contextId,
+	messageId,
 	commentData,
-	contextType, // 'chat' or 'assessment' or 'wireframe'
+	contextType,
 ) => {
 	try {
-		const workspace = await Workspace.findOne({
-			_id: workspaceId,
-			"folders._id": folderId,
-		});
+		const table = _getCommentsTable(contextType);
+		if (!table) throw new ApiError(httpStatus.BAD_REQUEST, "Invalid context type!");
 
-		if (!workspace) {
-			throw new ApiError(httpStatus.BAD_REQUEST, "Workspace or Folder not found!");
-		}
+		// Build insert row — chat comments reference chat_id, assessment reference assessment_id, wireframe reference wireframe_id
+		const row = {
+			user_id: commentData.userId,
+			user_name: commentData.userName,
+			text: commentData.text,
+			status: commentData.status || "active",
+		};
 
 		if (contextType === "chat") {
-			const folder = workspace.folders.id(folderId);
-			const chat = folder.chats.id(contextId);
-
-			if (!chat) {
-				throw new ApiError(httpStatus.BAD_REQUEST, "Chat not found!");
-			}
-
-			chat.comments.push(commentData);
-			await workspace.save();
-
-			const message = chat.generalMessages.find((message) => message._id.toString() === messageId);
-
-			const newChat = chat.comments[chat.comments.length - 1].toObject();
-			newChat.message = message.text;
-			return newChat;
+			// Verify chat exists
+			const { data: chat } = await supabase.from("folder_chats").select("id").eq("id", contextId).single();
+			if (!chat) throw new ApiError(httpStatus.BAD_REQUEST, "Chat not found!");
+			row.chat_id = contextId;
+			row.message_id = messageId;
 		} else if (contextType === "assessment") {
-			const folder = workspace.folders.id(folderId);
-			const assessment = folder.assessments.id(contextId);
-
-			if (!assessment) {
-				throw new ApiError(httpStatus.BAD_REQUEST, "Assessment not found!");
-			}
-
-			let questionAnswerFound = null;
-
-			for (const report of assessment.report) {
-				for (const subReport of report.subReport) {
-					questionAnswerFound = subReport.questionAnswer.find((qa) => qa._id.toString() === messageId);
-					if (questionAnswerFound) break;
-				}
-				if (questionAnswerFound) break;
-			}
-
-			if (!questionAnswerFound) {
-				throw new ApiError(httpStatus.BAD_REQUEST, "Message not found!");
-			}
-
-			questionAnswerFound.comments.push(commentData);
-			await workspace.save();
-
-			return questionAnswerFound.comments[questionAnswerFound.comments.length - 1];
+			row.chat_id = contextId; // assessment comments use the same FK pattern
+			row.message_id = messageId;
 		} else if (contextType === "wireframe") {
-			const folder = workspace.folders.id(folderId);
-			const wireframe = folder.wireframes.id(contextId);
-
-			if (!wireframe) {
-				throw new ApiError(httpStatus.BAD_REQUEST, "Wireframe not found!");
-			}
-
-			wireframe.comments.push(commentData);
-			await workspace.save();
-
-			return wireframe.comments[wireframe.comments.length - 1];
-		} else {
-			throw new ApiError(httpStatus.BAD_REQUEST, "Invalid context type!");
+			const { data: wf } = await supabase.from("folder_wireframes").select("id").eq("id", contextId).single();
+			if (!wf) throw new ApiError(httpStatus.BAD_REQUEST, "Wireframe not found!");
+			row.wireframe_id = contextId;
 		}
+
+		const { data: newComment, error } = await supabase
+			.from(table)
+			.insert(row)
+			.select()
+			.single();
+		if (error) throw new ApiError(httpStatus.BAD_REQUEST, error.message);
+
+		// For chat comments, attach the message text
+		if (contextType === "chat" && messageId) {
+			const { data: msg } = await supabase
+				.from("folder_chat_messages")
+				.select("text")
+				.eq("id", messageId)
+				.single();
+			if (msg) newComment.message = msg.text;
+		}
+
+		return newComment;
 	} catch (error) {
+		if (error instanceof ApiError) throw error;
 		throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, error.message);
 	}
 };
+
 const getUserChatComments = async (userId) => {
 	try {
-		const workspaces = await Workspace.find({
-			"folders.chats.comments.userId": userId,
-		});
+		const { data: comments } = await supabase
+			.from("folder_chat_comments")
+			.select(`
+				*,
+				chat:folder_chats(
+					id, folder_id,
+					folder:folders(id, workspace_id)
+				)
+			`)
+			.eq("user_id", userId);
 
-		const comments = [];
-
-		workspaces.forEach((workspace) => {
-			workspace.folders.forEach((folder) => {
-				folder.chats.forEach((chat) => {
-					chat.generalMessages.forEach((message) => {
-						chat.comments.forEach((comment) => {
-							if (
-								comment.userId.toString() === userId.toString() &&
-								comment.messageId.toString() === message._id.toString()
-							) {
-								comments.push({
-									workspaceId: workspace._id,
-									folderId: folder._id,
-									chatId: chat._id,
-									messageId: message._id,
-									comment,
-								});
-							}
-						});
-					});
-				});
-			});
-		});
-		return comments;
+		return (comments || []).map((c) => ({
+			workspaceId: c.chat?.folder?.workspace_id,
+			folderId: c.chat?.folder_id,
+			chatId: c.chat_id,
+			messageId: c.message_id,
+			comment: c,
+		}));
 	} catch (error) {
 		throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, error.message);
 	}
 };
+
 const updateComment = async (workspaceId, folderId, contextId, messageId, commentId, commentData, contextType) => {
 	try {
-		const workspace = await Workspace.findOne({
-			_id: workspaceId,
-			"folders._id": folderId,
-		});
-		if (!workspace) {
-			throw new ApiError(httpStatus.BAD_REQUEST, "Workspace or Folder not found!");
-		}
+		const table = _getCommentsTable(contextType);
+		if (!table) throw new ApiError(httpStatus.BAD_REQUEST, "Invalid context type!");
 
-		const folder = workspace.folders.id(folderId);
+		const mapped = {};
+		if (commentData.text !== undefined) mapped.text = commentData.text;
+		if (commentData.status !== undefined) mapped.status = commentData.status;
 
-		let comment;
-
-		if (contextType === "chat") {
-			const chat = folder.chats.id(contextId);
-			// const message = chat.generalMessages.id(messageId);
-			if (!chat) {
-				throw new ApiError(httpStatus.BAD_REQUEST, "Message not found!");
-			}
-			comment = chat.comments.id(commentId);
-		} else if (contextType === "assessment") {
-			const assessment = folder.assessments.id(contextId);
-			let foundComment = false;
-
-			// Iterate through subReports to find the correct questionAnswer by ID
-			for (const report of assessment.report) {
-				for (const subReport of report.subReport) {
-					const qa = subReport.questionAnswer.id(messageId);
-					if (qa) {
-						comment = qa.comments.id(commentId);
-						foundComment = true;
-						break;
-					}
-				}
-				if (foundComment) break;
-			}
-
-			if (!foundComment) {
-				throw new ApiError(httpStatus.BAD_REQUEST, "Question/Answer not found!");
-			}
-		}
-
-		if (!comment) {
-			throw new ApiError(httpStatus.BAD_REQUEST, "Comment not found!");
-		}
-
-		Object.assign(comment, commentData);
-		await workspace.save();
-
-		return comment;
+		const { data, error } = await supabase
+			.from(table)
+			.update(mapped)
+			.eq("id", commentId)
+			.select()
+			.single();
+		if (error || !data) throw new ApiError(httpStatus.BAD_REQUEST, "Comment not found!");
+		return data;
 	} catch (error) {
+		if (error instanceof ApiError) throw error;
 		throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, error.message);
 	}
 };
+
 const deleteComment = async (workspaceId, folderId, chatId, messageId, commentId) => {
 	try {
-		const updatedWorkspace = await Workspace.findOneAndUpdate(
-			{
-				_id: workspaceId,
-			},
-			{
-				$pull: {
-					"folders.$[folder].chats.$[chat].comments": { _id: commentId },
-				},
-			},
-			{
-				arrayFilters: [{ "folder._id": folderId }, { "chat._id": chatId }],
-				new: true,
-			},
-		);
-
-		if (!updatedWorkspace) {
-			throw new ApiError(httpStatus.BAD_REQUEST, "Workspace, Folder, or Chat not found!");
-		}
-
+		const { error } = await supabase
+			.from("folder_chat_comments")
+			.delete()
+			.eq("id", commentId);
+		if (error) throw new ApiError(httpStatus.BAD_REQUEST, error.message);
 		return { success: true, message: "Comment deleted successfully" };
 	} catch (error) {
+		if (error instanceof ApiError) throw error;
 		throw new ApiError(httpStatus.BAD_REQUEST, `Error deleting comment: ${error.message}`);
 	}
 };
+
+// ─── Bookmarks ───────────────────────────────────────────────────
+
 const bookmarkMessage = async (workspaceId, folderId, contextId, messageId, userId, contextType) => {
 	try {
-		const workspace = await Workspace.findOne({
-			_id: workspaceId,
-			"folders._id": folderId,
-		});
-		if (!workspace) throw new ApiError(httpStatus.BAD_REQUEST, "Workspace or Folder not found!");
-
-		const folder = workspace.folders.id(folderId);
-
-		let message;
 		if (contextType === "chat") {
-			const chat = folder.chats.id(contextId);
-			if (!chat) throw new ApiError(httpStatus.BAD_REQUEST, "Chat not found!");
-			message = chat;
+			const { data, error } = await supabase
+				.from("folder_chat_bookmarks")
+				.insert({ chat_id: contextId, user_id: userId, message_id: messageId })
+				.select()
+				.single();
+			if (error) throw new ApiError(httpStatus.BAD_REQUEST, error.message);
+			return data;
 		} else if (contextType === "assessment") {
-			const assessment = folder.assessments.id(contextId);
-			if (!assessment) throw new ApiError(httpStatus.BAD_REQUEST, "Assessment not found!");
-
-			for (const report of assessment.report) {
-				for (const subReport of report.subReport) {
-					const questionAnswer = subReport.questionAnswer.id(messageId);
-					if (questionAnswer) {
-						message = questionAnswer;
-						break;
-					}
-				}
-				if (message) break;
-			}
+			// Assessment bookmarks use the assessment bookmark table if it exists,
+			// otherwise fall back to a generic pattern
+			const { data, error } = await supabase
+				.from("folder_chat_bookmarks")
+				.insert({ chat_id: contextId, user_id: userId, message_id: messageId })
+				.select()
+				.single();
+			if (error) throw new ApiError(httpStatus.BAD_REQUEST, error.message);
+			return data;
 		}
-
-		if (!message) throw new ApiError(httpStatus.BAD_REQUEST, "Message or Question-Answer not found!");
-
-		message.bookmarks.push({ userId, messageId, timestamp: new Date() });
-		await workspace.save();
-
-		return message.bookmarks[message.bookmarks.length - 1];
+		throw new ApiError(httpStatus.BAD_REQUEST, "Invalid context type!");
 	} catch (error) {
+		if (error instanceof ApiError) throw error;
 		throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, error.message);
 	}
 };
+
 const unbookmarkMessage = async (workspaceId, folderId, contextId, messageId, bookmarkId, contextType) => {
 	try {
-		const workspace = await Workspace.findOne({
-			_id: workspaceId,
-			"folders._id": folderId,
-		});
-		if (!workspace) throw new ApiError(httpStatus.BAD_REQUEST, "Workspace or Folder not found!");
+		const { data } = await supabase
+			.from("folder_chat_bookmarks")
+			.select("*")
+			.eq("id", bookmarkId)
+			.single();
+		if (!data) throw new ApiError(httpStatus.BAD_REQUEST, "Bookmark not found!");
 
-		const folder = workspace.folders.id(folderId);
-
-		let message;
-		if (contextType === "chat") {
-			const chat = folder.chats.id(contextId);
-			if (!chat) throw new ApiError(httpStatus.BAD_REQUEST, "Chat not found!");
-			message = chat;
-		} else if (contextType === "assessment") {
-			const assessment = folder.assessments.id(contextId);
-			if (!assessment) throw new ApiError(httpStatus.BAD_REQUEST, "Assessment not found!");
-
-			for (const report of assessment.report) {
-				for (const subReport of report.subReport) {
-					const questionAnswer = subReport.questionAnswer.id(messageId);
-					if (questionAnswer) {
-						message = questionAnswer;
-						break;
-					}
-				}
-				if (message) break;
-			}
-		}
-
-		if (!message) throw new ApiError(httpStatus.BAD_REQUEST, "Message or Question-Answer not found!");
-
-		const bookmark = message.bookmarks.id(bookmarkId);
-		if (!bookmark) throw new ApiError(httpStatus.BAD_REQUEST, "Bookmark not found!");
-
-		bookmark.remove();
-		await workspace.save();
-
-		return bookmark;
+		await supabase.from("folder_chat_bookmarks").delete().eq("id", bookmarkId);
+		return data;
 	} catch (error) {
+		if (error instanceof ApiError) throw error;
 		throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, error.message);
 	}
 };
+
 const getBookmarksForUser = async (userId) => {
 	try {
-		const workspaces = await Workspace.find({
-			"folders.chats.bookmarks.userId": userId,
-		});
+		const { data: bookmarks } = await supabase
+			.from("folder_chat_bookmarks")
+			.select(`
+				*,
+				chat:folder_chats(
+					id, folder_id,
+					folder:folders(id, workspace_id)
+				)
+			`)
+			.eq("user_id", userId);
 
-		const bookmarks = [];
-
-		workspaces.forEach((workspace) => {
-			workspace.folders.forEach((folder) => {
-				folder.chats.forEach((chat) => {
-					chat.generalMessages.forEach((message) => {
-						chat.bookmarks.forEach((bookmark) => {
-							if (
-								bookmark.userId.toString() === userId.toString() &&
-								bookmark.messageId.toString() === message._id.toString()
-							) {
-								bookmarks.push({
-									workspaceId: workspace._id,
-									folderId: folder._id,
-									chatId: chat._id,
-									messageId: message._id,
-									bookmark,
-								});
-							}
-						});
-					});
-				});
-			});
-		});
-
-		return bookmarks;
+		return (bookmarks || []).map((b) => ({
+			workspaceId: b.chat?.folder?.workspace_id,
+			folderId: b.chat?.folder_id,
+			chatId: b.chat_id,
+			messageId: b.message_id,
+			bookmark: b,
+		}));
 	} catch (error) {
 		throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, error.message);
 	}
 };
+
 const getBookmarksForChat = async (userId, workspaceId, folderId, chatId) => {
 	try {
-		const workspace = await Workspace.findOne({
-			_id: workspaceId,
-			"folders._id": folderId,
-			"folders.chats._id": chatId,
-			"folders.chats.bookmarks.userId": userId,
-		});
+		const { data: bookmarks } = await supabase
+			.from("folder_chat_bookmarks")
+			.select("*")
+			.eq("chat_id", chatId)
+			.eq("user_id", userId);
 
-		if (!workspace) throw new ApiError(httpStatus.BAD_REQUEST, "Workspace, Folder, or Chat not found!");
-
-		const folder = workspace.folders.id(folderId);
-		const chat = folder.chats.id(chatId);
-		const bookmarks = [];
-
-		chat.generalMessages.forEach((message) => {
-			chat.bookmarks.forEach((bookmark) => {
-				if (bookmark.userId.toString() === userId.toString() && bookmark.messageId.toString() === message._id.toString()) {
-					bookmarks.push({
-						workspaceId: workspace._id,
-						folderId: folder._id,
-						chatId: chat._id,
-						messageId: message._id,
-						bookmark,
-					});
-				}
-			});
-		});
-
-		return bookmarks;
+		return (bookmarks || []).map((b) => ({
+			workspaceId,
+			folderId,
+			chatId,
+			messageId: b.message_id,
+			bookmark: b,
+		}));
 	} catch (error) {
 		throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, error.message);
 	}
 };
+
+// ─── Comment Replies ─────────────────────────────────────────────
+
 const addReplyToComment = async (workspaceId, folderId, chatId, messageId, commentId, replyData) => {
 	try {
-		const workspace = await Workspace.findOne({
-			_id: workspaceId,
-			"folders._id": folderId,
-		});
-
-		if (!workspace) throw new ApiError(httpStatus.BAD_REQUEST, "Workspace or Folder not found!");
-
-		const folder = workspace.folders.id(folderId);
-		const chat = folder.chats.id(chatId);
-		const comment = chat.comments.id(commentId);
-
-		if (!comment) throw new ApiError(httpStatus.BAD_REQUEST, "Comment not found!");
-
-		comment.replies.push(replyData);
-
-		await workspace.save();
-		return comment.replies[comment.replies.length - 1];
+		const { data, error } = await supabase
+			.from("folder_chat_comment_replies")
+			.insert({
+				comment_id: commentId,
+				user_id: replyData.userId,
+				user_name: replyData.userName,
+				text: replyData.text,
+			})
+			.select()
+			.single();
+		if (error) throw new ApiError(httpStatus.BAD_REQUEST, error.message);
+		return data;
 	} catch (error) {
+		if (error instanceof ApiError) throw error;
 		throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, error.message);
 	}
 };
+
 const updateReplyInComment = async (workspaceId, folderId, chatId, messageId, commentId, replyId, replyData) => {
 	try {
-		const workspace = await Workspace.findOne({
-			_id: workspaceId,
-			"folders._id": folderId,
-		});
+		const mapped = {};
+		if (replyData.text !== undefined) mapped.text = replyData.text;
 
-		if (!workspace) throw new ApiError(httpStatus.BAD_REQUEST, "Workspace or Folder not found!");
-
-		const folder = workspace.folders.id(folderId);
-		const chat = folder.chats.id(chatId);
-		const comment = chat.comments.id(commentId);
-		const reply = comment.replies.id(replyId);
-
-		if (!reply) throw new ApiError(httpStatus.BAD_REQUEST, "Reply not found!");
-
-		Object.assign(reply, replyData);
-
-		await workspace.save();
-		return reply;
+		const { data, error } = await supabase
+			.from("folder_chat_comment_replies")
+			.update(mapped)
+			.eq("id", replyId)
+			.eq("comment_id", commentId)
+			.select()
+			.single();
+		if (error || !data) throw new ApiError(httpStatus.BAD_REQUEST, "Reply not found!");
+		return data;
 	} catch (error) {
+		if (error instanceof ApiError) throw error;
 		throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, error.message);
 	}
 };
+
+// ─── Assessment CRUD ─────────────────────────────────────────────
+
 const createAssessment = async (workspaceId, folderId, body) => {
 	try {
-		const workspace = await Workspace.findOne(
-			{
-				_id: workspaceId,
-				"folders._id": folderId,
-			},
-			{
-				userId: 1,
-				"folders.$": 1,
-			},
-		);
-
-		if (!workspace) {
-			throw new ApiError(httpStatus.BAD_REQUEST, "Workspace or Folder not found!");
-		}
-
-		const { userId } = workspace;
+		// Get workspace userId
+		const { data: workspace } = await supabase
+			.from("workspaces")
+			.select("user_id")
+			.eq("id", workspaceId)
+			.single();
+		if (!workspace) throw new ApiError(httpStatus.BAD_REQUEST, "Workspace or Folder not found!");
 
 		const apiBody = {
-			user_id: userId,
+			user_id: workspace.user_id,
 			chat_id: folderId,
 			message: body.message || "",
 			general_info: body.generalInfo || "",
@@ -950,35 +918,44 @@ const createAssessment = async (workspaceId, folderId, body) => {
 		const gptResponse = await makeAxiosCall({ url: gptURL, method: "POST", data: apiBody });
 		const nextQuestion = gptResponse.message;
 
-		const subReport = {
-			ReportTitle: body.assessmentName,
-			questionAnswer: [],
-		};
+		// Create assessment
+		const { data: assessment, error: assessErr } = await supabase
+			.from("folder_assessments")
+			.insert({
+				folder_id: folderId,
+				name: body.name,
+				version: 1,
+			})
+			.select()
+			.single();
+		if (assessErr) throw new ApiError(httpStatus.BAD_REQUEST, assessErr.message);
 
-		subReport.questionAnswer.push({
-			question: {
-				content: nextQuestion,
-				timestamp: new Date(),
-			},
-			answer: {
-				userId: null,
-				content: "", // Answer is pending from the user
-				timestamp: null,
-			},
+		// Create report
+		const { data: report } = await supabase
+			.from("folder_assessment_reports")
+			.insert({
+				assessment_id: assessment.id,
+				report_title: "Initial Assessment Report",
+			})
+			.select()
+			.single();
+
+		// Create sub-report
+		const { data: subReport } = await supabase
+			.from("folder_assessment_sub_reports")
+			.insert({
+				report_id: report.id,
+				report_title: body.assessmentName,
+			})
+			.select()
+			.single();
+
+		// Create first QA entry
+		await supabase.from("folder_assessment_sub_report_qa").insert({
+			sub_report_id: subReport.id,
+			question: nextQuestion,
+			answer: "",
 		});
-
-		const newAssessment = {
-			name: body.name,
-			version: 1,
-			report: [
-				{
-					ReportTitle: "Initial Assessment Report",
-					subReport: [subReport],
-				},
-			],
-			media: body.media || [],
-			documents: body.documents || [],
-		};
 
 		const markdownPattern = /(```|#\s|-\s|\*\*|_\s|>\s)/;
 		const containsMarkdown = markdownPattern.test(nextQuestion);
@@ -987,100 +964,100 @@ const createAssessment = async (workspaceId, folderId, body) => {
 		if (containsMarkdown) {
 			const pdfFileName = `${Date.now()}_initial_assessment_report.pdf`;
 			const pdfFilePath = path.resolve(process.cwd(), "public/uploads", pdfFileName);
-
 			convertMarkdownToPDF(nextQuestion, pdfFilePath);
 
-			newAssessment.report[0].finalReport = nextQuestion;
-			newAssessment.report[0].finalReportURL = `/uploads/${pdfFileName}`;
-			newAssessment.report[0].isReportGenerated = true;
-			isReportGenerated = true; // Update the flag when report is generated
+			await supabase.from("folder_assessment_reports").update({
+				final_report: nextQuestion,
+				final_report_url: `/uploads/${pdfFileName}`,
+				is_report_generated: true,
+			}).eq("id", report.id);
+
+			isReportGenerated = true;
 		} else {
-			// No markdown, store the question as the next question awaiting response
-			subReport.questionAnswer.push({
-				question: {
-					content: nextQuestion,
-					timestamp: new Date(),
-				},
-				answer: {
-					userId: null,
-					content: "", // Answer is pending from the user
-					timestamp: null,
-				},
+			// Add another QA entry for the next question
+			await supabase.from("folder_assessment_sub_report_qa").insert({
+				sub_report_id: subReport.id,
+				question: nextQuestion,
+				answer: "",
 			});
 		}
 
-		const updatedWorkspace = await Workspace.findOneAndUpdate(
-			{ _id: workspaceId, "folders._id": folderId },
-			{ $push: { "folders.$.assessments": newAssessment } },
-			{ new: true, returnOriginal: false },
-		);
+		// Insert media/documents if present
+		if (isArrayWithLength(body.media)) {
+			const mediaRows = body.media.map((m) => ({
+				assessment_id: assessment.id,
+				file_name: m.name || m.fileName,
+				url: m.url,
+			}));
+			await supabase.from("folder_assessment_media").insert(mediaRows);
+		}
+		if (isArrayWithLength(body.documents)) {
+			const docRows = body.documents.map((d) => ({
+				assessment_id: assessment.id,
+				file_name: d.name || d.fileName,
+				name: d.name,
+				date: d.date || null,
+				size: d.size || null,
+			}));
+			await supabase.from("folder_assessment_documents").insert(docRows);
+		}
 
-		const workspaceFolder = updatedWorkspace.folders.find((folder) => folder._id.toString() === folderId);
-		const createdAssessment = workspaceFolder.assessments.at(-1).toObject();
-
-		createdAssessment.text = nextQuestion;
-		createdAssessment.isReportGenerated = isReportGenerated; // Include report generation status
-
-		return createdAssessment;
+		// Return full assessment object
+		const result = { ...assessment, text: nextQuestion, isReportGenerated };
+		return result;
 	} catch (error) {
+		if (error instanceof ApiError) throw error;
 		throw new ApiError(httpStatus.BAD_REQUEST, `Error creating assessment: ${error.message}`);
 	}
 };
+
 const updateAssessment = async (workspaceId, folderId, assessmentId, subReportId, updateBody) => {
 	try {
-		const workspace = await Workspace.findOne({
-			_id: workspaceId,
-			"folders._id": folderId,
-			"folders.assessments._id": assessmentId,
-			"folders.assessments.report.subReport._id": subReportId,
-		});
-		if (!workspace) {
-			throw new ApiError(httpStatus.BAD_REQUEST, "Workspace, Folder, or Assessment not found!");
-		}
+		const { data: workspace } = await supabase.from("workspaces").select("user_id").eq("id", workspaceId).single();
+		if (!workspace) throw new ApiError(httpStatus.BAD_REQUEST, "Workspace, Folder, or Assessment not found!");
 
-		const previousAnswer = {
-			userId: workspace.userId, // Ensure this is the correct user
-			content: updateBody.content,
-			timestamp: new Date(),
-		};
+		const { data: assessment } = await supabase
+			.from("folder_assessments")
+			.select("id, name")
+			.eq("id", assessmentId)
+			.single();
+		if (!assessment) throw new ApiError(httpStatus.BAD_REQUEST, "Assessment not found!");
 
-		const folder = workspace.folders.id(folderId);
-		const projectAssessment = folder.assessments.id(assessmentId);
-		const report = projectAssessment.report.find((r) => r.subReport.id(subReportId));
-		const reportSubReport = report.subReport.id(subReportId);
+		// Get the sub-report
+		const { data: subReport } = await supabase
+			.from("folder_assessment_sub_reports")
+			.select("id, report_title, report_id")
+			.eq("id", subReportId)
+			.single();
+		if (!subReport) throw new ApiError(httpStatus.BAD_REQUEST, "Sub-report not found!");
 
-		if (!isArrayWithLength(reportSubReport.questionAnswer)) {
+		// Get all QA for this sub-report, update the last one with the answer
+		const { data: qaItems } = await supabase
+			.from("folder_assessment_sub_report_qa")
+			.select("*")
+			.eq("sub_report_id", subReportId)
+			.order("created_at", { ascending: true });
+
+		if (!isArrayWithLength(qaItems)) {
 			throw new ApiError(httpStatus.BAD_REQUEST, "No questionAnswer items found in this assessment.");
 		}
 
-		const lastQuestionAnswer = reportSubReport.questionAnswer[reportSubReport.questionAnswer.length - 1];
-		lastQuestionAnswer.answer = previousAnswer;
-		const updatedWorkspace = await workspace.save();
+		const lastQA = qaItems[qaItems.length - 1];
+		await supabase.from("folder_assessment_sub_report_qa").update({
+			answer: updateBody.content,
+		}).eq("id", lastQA.id);
 
-		const assessment = updatedWorkspace.folders
-			.find((folder) => folder._id.toString() === folderId)
-			.assessments.find((assessment) => assessment._id.toString() === assessmentId);
-
-		if (!assessment) {
-			throw new ApiError(httpStatus.BAD_REQUEST, "Assessment not found!");
-		}
-
-		const subReport = assessment.report[0].subReport.find((sub) => sub._id.toString() === subReportId);
-
-		if (!subReport) {
-			throw new ApiError(httpStatus.BAD_REQUEST, "No pending question found!");
-		}
-
-		const textMessages = ["", ...subReport.questionAnswer.flatMap((qa) => [qa.question.content, qa.answer.content])];
+		// Build history from all QA
+		const textMessages = ["", ...qaItems.flatMap((qa) => [qa.question, qa.answer])];
 
 		const apiBody = {
-			user_id: updatedWorkspace.userId,
-			chat_id: assessment._id.toString(),
+			user_id: workspace.user_id,
+			chat_id: assessmentId,
 			message: updateBody.content,
 			history: textMessages,
-			general_info: assessment.generalInfo,
-			business_info: assessment.businessInfo,
-			assessment_name: subReport.ReportTitle,
+			general_info: "",
+			business_info: "",
+			assessment_name: subReport.report_title,
 		};
 
 		const gptURL = `${config.baseUrl}/assesment-chat`;
@@ -1093,456 +1070,348 @@ const updateAssessment = async (workspaceId, folderId, assessmentId, subReportId
 		const markdownPattern = /(```|#\s|-\s|\*\*|_\s|>\s)/;
 		const containsMarkdown = markdownPattern.test(gptResponse.message);
 		const nextQuestion = gptResponse.message;
-		const nextQuestionData = {
-			question: {
-				content: nextQuestion,
-				timestamp: new Date(),
-			},
-			answer: {
-				userId: null,
-				content: "", // Answer is pending from the user
-				timestamp: null,
-			},
-		};
 
 		if (containsMarkdown) {
 			const pdfFileName = `${Date.now()}_assessment_report.pdf`;
 			const pdfFilePath = path.resolve(process.cwd(), "public/uploads", pdfFileName);
-
 			convertMarkdownToPDF(gptResponse.message, pdfFilePath);
 
-			const previousReport = {
-				finalSubReport: assessment.report[0].finalReport,
-				finalSubReportURL: assessment.report[0].finalReportURL,
-				ReportTitle: "Previous Assessment Report",
-				questionAnswer: subReport.questionAnswer,
-			};
+			// Get current report to create sub-report from previous
+			const { data: report } = await supabase
+				.from("folder_assessment_reports")
+				.select("*")
+				.eq("id", subReport.report_id)
+				.single();
 
-			assessment.report[0].subReport.push(previousReport);
+			if (report && report.final_report) {
+				await supabase.from("folder_assessment_sub_reports").insert({
+					report_id: report.id,
+					final_sub_report: report.final_report,
+					final_sub_report_url: report.final_report_url,
+					report_title: "Previous Assessment Report",
+				});
+			}
 
-			assessment.report[0].finalReport = gptResponse.message;
-			assessment.report[0].finalReportURL = `/uploads/${pdfFileName}`;
-			assessment.report[0].isReportGenerated = true;
+			await supabase.from("folder_assessment_reports").update({
+				final_report: gptResponse.message,
+				final_report_url: `/uploads/${pdfFileName}`,
+				is_report_generated: true,
+				report_title: gptResponse.title || report?.report_title,
+			}).eq("id", subReport.report_id);
 		} else {
-			// The response does not contain markdown
-			// Store the next question as the pending question
-			subReport.questionAnswer.push(nextQuestionData);
+			// Store next question
+			await supabase.from("folder_assessment_sub_report_qa").insert({
+				sub_report_id: subReportId,
+				question: nextQuestion,
+				answer: "",
+			});
 		}
 
-		if (updateBody.media) {
-			assessment.media.push(...updateBody.media);
+		// Handle media/documents
+		if (isArrayWithLength(updateBody.media)) {
+			const mediaRows = updateBody.media.map((m) => ({
+				assessment_id: assessmentId,
+				file_name: m.name || m.fileName,
+				url: m.url,
+			}));
+			await supabase.from("folder_assessment_media").insert(mediaRows);
 		}
-		if (updateBody.documents) {
-			assessment.documents.push(...updateBody.documents);
+		if (isArrayWithLength(updateBody.documents)) {
+			const docRows = updateBody.documents.map((d) => ({
+				assessment_id: assessmentId,
+				file_name: d.name || d.fileName,
+				name: d.name,
+				date: d.date || null,
+				size: d.size || null,
+			}));
+			await supabase.from("folder_assessment_documents").insert(docRows);
 		}
-		// Update the assessment in the database
-		await Workspace.findOneAndUpdate(
-			{
-				_id: workspaceId,
-				"folders._id": folderId,
-				"folders.assessments._id": assessmentId,
-			},
-			{
-				$set: {
-					"folders.$.assessments.$[assessment].report": assessment.report,
-				},
-			},
-			{
-				arrayFilters: [{ "assessment._id": assessmentId }],
-				new: true,
-			},
-		);
 
 		return {
 			success: true,
-			question: nextQuestionData.question,
+			question: { content: nextQuestion, timestamp: new Date() },
 			text: nextQuestion,
-			isReportGenerated: containsMarkdown ? true : false,
+			isReportGenerated: containsMarkdown,
 		};
 	} catch (error) {
+		if (error instanceof ApiError) throw error;
 		throw new ApiError(httpStatus.BAD_REQUEST, `Error storing user response: ${error.message}`);
 	}
 };
+
 const getAssessment = async (workspaceId, folderId, assessmentId) => {
 	try {
-		const workspace = await Workspace.findOne({
-			_id: workspaceId,
-			"folders._id": folderId,
-			"folders.assessments._id": assessmentId,
-		});
-
-		if (!workspace) {
-			throw new ApiError(httpStatus.BAD_REQUEST, "Workspace, Folder, or Assessment not found!");
-		}
-
-		const folder = workspace.folders.find((folder) => folder._id.toString() === folderId);
-		if (!folder) {
-			throw new ApiError(httpStatus.BAD_REQUEST, "Folder not found!");
-		}
-
-		const assessment = folder.assessments.find((assessment) => assessment._id.toString() === assessmentId);
-		if (!assessment) {
-			throw new ApiError(httpStatus.BAD_REQUEST, "Assessment not found!");
-		}
-
-		if (assessment.isSoftDeleted) {
-			throw new ApiError(httpStatus.NOT_FOUND, "Assessment is soft-deleted and not available.");
-		}
-
+		const { data: assessment } = await supabase
+			.from("folder_assessments")
+			.select(`
+				*,
+				reports:folder_assessment_reports(
+					*,
+					sub_reports:folder_assessment_sub_reports(
+						*,
+						question_answer:folder_assessment_sub_report_qa(*)
+					)
+				)
+			`)
+			.eq("id", assessmentId)
+			.eq("folder_id", folderId)
+			.single();
+		if (!assessment) throw new ApiError(httpStatus.BAD_REQUEST, "Assessment not found!");
+		if (assessment.is_soft_deleted) throw new ApiError(httpStatus.NOT_FOUND, "Assessment is soft-deleted and not available.");
 		return assessment;
 	} catch (error) {
+		if (error instanceof ApiError) throw error;
 		throw new ApiError(httpStatus.BAD_REQUEST, `Error retrieving assessment: ${error.message}`);
 	}
 };
+
 const deleteAssessment = async (workspaceId, folderId, assessmentId) => {
 	try {
-		const workspace = await Workspace.findOne({
-			_id: workspaceId,
-			"folders._id": folderId,
-			"folders.assessments._id": assessmentId,
-		});
+		const { data: assessment } = await supabase
+			.from("folder_assessments")
+			.select("id, is_soft_deleted")
+			.eq("id", assessmentId)
+			.eq("folder_id", folderId)
+			.single();
+		if (!assessment) throw new ApiError(httpStatus.BAD_REQUEST, "Assessment not found!");
 
-		if (!workspace) {
-			throw new ApiError(httpStatus.BAD_REQUEST, "Workspace, Folder, or Assessment not found!");
-		}
-
-		const folder = workspace.folders.id(folderId);
-		if (!folder) {
-			throw new ApiError(httpStatus.BAD_REQUEST, "Folder not found!");
-		}
-
-		const assessment = folder.assessments.id(assessmentId);
-		if (!assessment) {
-			throw new ApiError(httpStatus.BAD_REQUEST, "Assessment not found!");
-		}
-
-		if (assessment.isSoftDeleted) {
-			await Workspace.findOneAndUpdate(
-				{
-					_id: workspaceId,
-					"folders._id": folderId,
-				},
-				{
-					$pull: {
-						"folders.$.assessments": { _id: assessmentId },
-					},
-				},
-				{ new: true },
-			);
+		if (assessment.is_soft_deleted) {
+			await supabase.from("folder_assessments").delete().eq("id", assessmentId);
 			return { success: true, message: "Assessment permanently deleted" };
 		} else {
-			assessment.isSoftDeleted = true;
-			await workspace.save();
+			await supabase.from("folder_assessments").update({ is_soft_deleted: true }).eq("id", assessmentId);
 			return { success: true, message: "Assessment soft deleted" };
 		}
 	} catch (error) {
+		if (error instanceof ApiError) throw error;
 		throw new ApiError(httpStatus.BAD_REQUEST, `Error deleting assessment: ${error.message}`);
 	}
 };
+
+// ─── Business Info CRUD ──────────────────────────────────────────
+
 const createBusinessInfo = async (workspaceId, folderId, body) => {
 	try {
-		const workspace = await Workspace.findOne({
-			_id: workspaceId,
-			"folders._id": folderId,
-		});
+		const { data: folder } = await supabase.from("folders").select("id").eq("id", folderId).eq("workspace_id", workspaceId).single();
+		if (!folder) throw new ApiError(httpStatus.BAD_REQUEST, "Workspace or Folder not found!");
 
-		if (!workspace) {
-			throw new ApiError(httpStatus.BAD_REQUEST, "Workspace or Folder not found!");
-		}
+		const { data, error } = await supabase
+			.from("folder_business_info")
+			.insert({
+				folder_id: folderId,
+				company_size: body.companySize,
+				company_name: body.companyName,
+				job_title: body.jobTitle,
+				industry: body.industry,
+				role: body.role,
+				user_name: body.userName,
+			})
+			.select()
+			.single();
+		if (error) throw new ApiError(httpStatus.BAD_REQUEST, error.message);
 
-		const folder = workspace.folders.id(folderId);
-
-		if (!folder) {
-			throw new ApiError(httpStatus.BAD_REQUEST, "Folder not found!");
-		}
-
-		folder.businessInfo.push(body);
-		await workspace.save();
-
-		return {
-			success: true,
-			message: "Business information created successfully",
-			data: folder.businessInfo[folder.businessInfo.length - 1],
-		};
+		return { success: true, message: "Business information created successfully", data };
 	} catch (error) {
+		if (error instanceof ApiError) throw error;
 		throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, `Error creating business information: ${error.message}`);
 	}
 };
+
 const getBusinessInfo = async (workspaceId, folderId, businessInfoId) => {
 	try {
-		const workspace = await Workspace.findOne({
-			_id: workspaceId,
-			"folders._id": folderId,
-			"folders.businessInfo._id": businessInfoId,
-		});
-
-		if (!workspace) {
-			throw new ApiError(httpStatus.BAD_REQUEST, "Workspace, Folder, or Business Info not found!");
-		}
-
-		const businessInfo = workspace.folders
-			.find((folder) => folder._id.toString() === folderId)
-			.businessInfo.find((info) => info._id.toString() === businessInfoId);
-
-		if (!businessInfo) {
-			throw new ApiError(httpStatus.NOT_FOUND, "Business information not found!");
-		}
-
-		return businessInfo;
+		const { data } = await supabase
+			.from("folder_business_info")
+			.select("*")
+			.eq("id", businessInfoId)
+			.eq("folder_id", folderId)
+			.single();
+		if (!data) throw new ApiError(httpStatus.NOT_FOUND, "Business information not found!");
+		return data;
 	} catch (error) {
+		if (error instanceof ApiError) throw error;
 		throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, `Error retrieving business information: ${error.message}`);
 	}
 };
+
 const updateBusinessInfo = async (workspaceId, folderId, businessInfoId, body) => {
 	try {
-		const workspace = await Workspace.findOne({
-			_id: workspaceId,
-			"folders._id": folderId,
-			"folders.businessInfo._id": businessInfoId,
-		});
+		const mapped = {};
+		if (body.companySize !== undefined) mapped.company_size = body.companySize;
+		if (body.companyName !== undefined) mapped.company_name = body.companyName;
+		if (body.jobTitle !== undefined) mapped.job_title = body.jobTitle;
+		if (body.industry !== undefined) mapped.industry = body.industry;
+		if (body.role !== undefined) mapped.role = body.role;
+		if (body.userName !== undefined) mapped.user_name = body.userName;
 
-		if (!workspace) {
-			throw new ApiError(httpStatus.BAD_REQUEST, "Workspace, Folder, or Business Information not found!");
-		}
+		const { data, error } = await supabase
+			.from("folder_business_info")
+			.update(mapped)
+			.eq("id", businessInfoId)
+			.eq("folder_id", folderId)
+			.select()
+			.single();
+		if (error || !data) throw new ApiError(httpStatus.BAD_REQUEST, "Business information not found!");
 
-		const folderIndex = workspace.folders.findIndex((folder) => folder._id.toString() === folderId);
-
-		if (folderIndex === -1) {
-			throw new ApiError(httpStatus.BAD_REQUEST, "Folder not found!");
-		}
-
-		const businessInfoIndex = workspace.folders[folderIndex].businessInfo.findIndex(
-			(info) => info._id.toString() === businessInfoId,
-		);
-
-		if (businessInfoIndex === -1) {
-			throw new ApiError(httpStatus.BAD_REQUEST, "Business information not found!");
-		}
-
-		workspace.folders[folderIndex].businessInfo[businessInfoIndex] = body;
-
-		await workspace.save();
-
-		return {
-			success: true,
-			message: "Business information updated successfully",
-			data: workspace.folders[folderIndex].businessInfo[businessInfoIndex],
-		};
+		return { success: true, message: "Business information updated successfully", data };
 	} catch (error) {
+		if (error instanceof ApiError) throw error;
 		throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, `Error updating business information: ${error.message}`);
 	}
 };
+
 const deleteBusinessInfo = async (workspaceId, folderId, businessInfoId) => {
 	try {
-		const workspace = await Workspace.findOneAndUpdate(
-			{
-				_id: workspaceId,
-				"folders._id": folderId,
-				"folders.businessInfo._id": businessInfoId,
-			},
-			{
-				$pull: {
-					"folders.$.businessInfo": { _id: businessInfoId },
-				},
-			},
-			{ new: true },
-		);
-
-		if (!workspace) {
-			throw new ApiError(httpStatus.BAD_REQUEST, "Workspace, Folder, or Business Information not found!");
-		}
-
+		const { error } = await supabase
+			.from("folder_business_info")
+			.delete()
+			.eq("id", businessInfoId)
+			.eq("folder_id", folderId);
+		if (error) throw new ApiError(httpStatus.BAD_REQUEST, error.message);
 		return { success: true, message: "Business information deleted successfully" };
 	} catch (error) {
+		if (error instanceof ApiError) throw error;
 		throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, `Error deleting business information: ${error.message}`);
 	}
 };
+
+// ─── Survey Info CRUD ────────────────────────────────────────────
+
 const createSurveyInfo = async (workspaceId, folderId, surveyInfoArray) => {
 	try {
-		const workspace = await Workspace.findOne({
-			_id: workspaceId,
-			"folders._id": folderId,
-		});
+		const { data: folder } = await supabase.from("folders").select("id").eq("id", folderId).eq("workspace_id", workspaceId).single();
+		if (!folder) throw new ApiError(httpStatus.BAD_REQUEST, "Workspace or Folder not found!");
 
-		if (!workspace) {
-			throw new ApiError(httpStatus.BAD_REQUEST, "Workspace or Folder not found!");
-		}
+		const rows = surveyInfoArray.map((s) => ({
+			folder_id: folderId,
+			question: s.question,
+			answer: s.answer,
+		}));
 
-		const folder = workspace.folders.id(folderId);
+		const { data, error } = await supabase
+			.from("folder_survey_info")
+			.insert(rows)
+			.select();
+		if (error) throw new ApiError(httpStatus.BAD_REQUEST, error.message);
 
-		if (!folder) {
-			throw new ApiError(httpStatus.BAD_REQUEST, "Folder not found!");
-		}
-
-		folder.surveyInfo.push(...surveyInfoArray);
-
-		await workspace.save();
-
-		return {
-			success: true,
-			message: "Survey information created successfully",
-			data: folder.surveyInfo.slice(-surveyInfoArray.length),
-		};
+		return { success: true, message: "Survey information created successfully", data };
 	} catch (error) {
+		if (error instanceof ApiError) throw error;
 		throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, `Error creating survey information: ${error.message}`);
 	}
 };
+
 const getSurveyInfo = async (workspaceId, folderId) => {
 	try {
-		const workspace = await Workspace.findOne({
-			_id: workspaceId,
-			"folders._id": folderId,
-		});
+		const { data: folder } = await supabase.from("folders").select("id").eq("id", folderId).eq("workspace_id", workspaceId).single();
+		if (!folder) throw new ApiError(httpStatus.BAD_REQUEST, "Workspace or Folder not found!");
 
-		if (!workspace) {
-			throw new ApiError(httpStatus.BAD_REQUEST, "Workspace or Folder not found!");
-		}
+		const { data } = await supabase
+			.from("folder_survey_info")
+			.select("*")
+			.eq("folder_id", folderId);
 
-		const folder = workspace.folders.find((folder) => folder._id.toString() === folderId);
-
-		if (!folder) {
-			throw new ApiError(httpStatus.BAD_REQUEST, "Folder not found!");
-		}
-
-		const surveyInfoArray = folder.surveyInfo;
-
-		if (!surveyInfoArray || surveyInfoArray.length === 0) {
-			throw new ApiError(httpStatus.NOT_FOUND, "Survey information not found!");
-		}
-
-		return surveyInfoArray;
+		if (!data || data.length === 0) throw new ApiError(httpStatus.NOT_FOUND, "Survey information not found!");
+		return data;
 	} catch (error) {
+		if (error instanceof ApiError) throw error;
 		throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, `Error retrieving survey information: ${error.message}`);
 	}
 };
+
 const updateSurveyInfo = async (workspaceId, folderId, body) => {
 	try {
-		const workspace = await Workspace.findOne({
-			_id: workspaceId,
-			"folders._id": folderId,
-		});
+		const { data: folder } = await supabase.from("folders").select("id").eq("id", folderId).eq("workspace_id", workspaceId).single();
+		if (!folder) throw new ApiError(httpStatus.BAD_REQUEST, "Workspace or Folder not found!");
 
-		if (!workspace) {
-			throw new ApiError(httpStatus.BAD_REQUEST, "Workspace or Folder not found!");
-		}
+		// Delete existing and re-insert
+		await supabase.from("folder_survey_info").delete().eq("folder_id", folderId);
 
-		const folderIndex = workspace.folders.findIndex((folder) => folder._id.toString() === folderId);
+		const rows = body.map((s) => ({
+			folder_id: folderId,
+			question: s.question,
+			answer: s.answer,
+		}));
 
-		if (folderIndex === -1) {
-			throw new ApiError(httpStatus.BAD_REQUEST, "Folder not found!");
-		}
+		const { data, error } = await supabase
+			.from("folder_survey_info")
+			.insert(rows)
+			.select();
+		if (error) throw new ApiError(httpStatus.BAD_REQUEST, error.message);
 
-		workspace.folders[folderIndex].surveyInfo = body;
-
-		await workspace.save();
-
-		return {
-			success: true,
-			message: "Survey information updated successfully",
-			data: workspace.folders[folderIndex].surveyInfo,
-		};
+		return { success: true, message: "Survey information updated successfully", data };
 	} catch (error) {
+		if (error instanceof ApiError) throw error;
 		throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, `Error updating survey information: ${error.message}`);
 	}
 };
+
 const deleteSurveyInfo = async (workspaceId, folderId) => {
 	try {
-		const workspace = await Workspace.findOneAndUpdate(
-			{
-				_id: workspaceId,
-				"folders._id": folderId,
-			},
-			{
-				$set: {
-					"folders.$.surveyInfo": [],
-				},
-			},
-			{ new: true },
-		);
+		const { data: folder } = await supabase.from("folders").select("id").eq("id", folderId).eq("workspace_id", workspaceId).single();
+		if (!folder) throw new ApiError(httpStatus.BAD_REQUEST, "Workspace or Folder not found!");
 
-		if (!workspace) {
-			throw new ApiError(httpStatus.BAD_REQUEST, "Workspace or Folder not found!");
-		}
-
+		await supabase.from("folder_survey_info").delete().eq("folder_id", folderId);
 		return { success: true, message: "Survey information deleted successfully" };
 	} catch (error) {
+		if (error instanceof ApiError) throw error;
 		throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, `Error deleting survey information: ${error.message}`);
 	}
 };
+
+// ─── Update Chat Metadata ────────────────────────────────────────
+
 const updateAssistantChat = async (workspaceId, folderId, chatId, body) => {
 	try {
-		const workspace = await Workspace.findOne({
-			_id: workspaceId,
-			"folders._id": folderId,
-			"folders.chats._id": chatId,
-		});
+		const mapped = {};
+		if (body.chatTitle !== undefined) mapped.chat_title = body.chatTitle;
+		if (body.version !== undefined) mapped.version = body.version;
+		if (body.isSoftDeleted !== undefined) mapped.is_soft_deleted = body.isSoftDeleted;
 
-		if (!workspace) {
-			throw new ApiError(httpStatus.BAD_REQUEST, "Workspace, Folder, or Chat not found!");
-		}
+		const { data, error } = await supabase
+			.from("folder_chats")
+			.update(mapped)
+			.eq("id", chatId)
+			.eq("folder_id", folderId)
+			.select()
+			.single();
+		if (error || !data) throw new ApiError(httpStatus.BAD_REQUEST, "Workspace, Folder, or Chat not found!");
 
-		const folder = workspace.folders.id(folderId);
-		if (!folder) {
-			throw new ApiError(httpStatus.BAD_REQUEST, "Folder not found!");
-		}
-
-		const chat = folder.chats.id(chatId);
-		if (!chat) {
-			throw new ApiError(httpStatus.BAD_REQUEST, "Chat not found!");
-		}
-
-		Object.keys(body).forEach((key) => {
-			chat[key] = body[key];
-		});
-		await workspace.save();
-
-		return {
-			success: true,
-			message: "Assistant chat updated successfully",
-			data: chat,
-		};
+		return { success: true, message: "Assistant chat updated successfully", data };
 	} catch (error) {
+		if (error instanceof ApiError) throw error;
 		throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, `Error updating assistant chat: ${error.message}`);
 	}
 };
+
+// ─── Trash (Soft Delete / Restore / Permanent Delete) ────────────
+
 const moveEntityToTrash = async (entityType, id) => {
 	const handlers = {
 		workspace: async () => {
-			const workspace = await Workspace.findById(id);
-			if (!workspace) throw new ApiError(httpStatus.NOT_FOUND, "Workspace not found");
-			if (workspace.workspaceName === "Default Workspace") {
+			const { data: ws } = await supabase.from("workspaces").select("workspace_name").eq("id", id).single();
+			if (!ws) throw new ApiError(httpStatus.NOT_FOUND, "Workspace not found");
+			if (ws.workspace_name === "Default Workspace") {
 				throw new ApiError(httpStatus.BAD_REQUEST, "Default workspace cannot be moved to trash!");
 			}
-			workspace.isSoftDeleted = true;
-			return await workspace.save();
+			const { data } = await supabase.from("workspaces").update({ is_soft_deleted: true }).eq("id", id).select().single();
+			return data;
 		},
-
 		folder: async () => {
-			const workspace = await Workspace.findOne({ "folders._id": id });
-			if (!workspace) throw new ApiError(httpStatus.NOT_FOUND, "Workspace not found");
-			const folder = workspace.folders.id(id);
+			const { data: folder } = await supabase.from("folders").select("folder_name").eq("id", id).single();
 			if (!folder) throw new ApiError(httpStatus.NOT_FOUND, "Folder not found");
-			if (folder.folderName === "Default Folder") {
+			if (folder.folder_name === "Default Folder") {
 				throw new ApiError(httpStatus.BAD_REQUEST, "Default folder cannot be moved to trash!");
 			}
-			folder.isSoftDeleted = true;
-			return await workspace.save();
+			const { data } = await supabase.from("folders").update({ is_soft_deleted: true }).eq("id", id).select().single();
+			return data;
 		},
-
 		chat: async () => {
-			return Workspace.findOneAndUpdate(
-				{ "folders.chats._id": id },
-				{ $set: { "folders.$[].chats.$[chat].isSoftDeleted": true } },
-				{ arrayFilters: [{ "chat._id": id }], new: true },
-			);
+			const { data } = await supabase.from("folder_chats").update({ is_soft_deleted: true }).eq("id", id).select().single();
+			return data;
 		},
-
 		assessment: async () => {
-			return Workspace.findOneAndUpdate(
-				{ "folders.assessments._id": id },
-				{ $set: { "folders.$[].assessments.$[assessment].isSoftDeleted": true } },
-				{ arrayFilters: [{ "assessment._id": id }], new: true },
-			);
+			const { data } = await supabase.from("folder_assessments").update({ is_soft_deleted: true }).eq("id", id).select().single();
+			return data;
 		},
 	};
 
@@ -1550,72 +1419,57 @@ const moveEntityToTrash = async (entityType, id) => {
 	if (!handler) throw new ApiError(httpStatus.BAD_REQUEST, "Invalid entity type");
 	return await handler();
 };
+
 const restoreEntityFromTrash = async (entityType, id) => {
 	switch (entityType) {
-		case "workspace":
-			return Workspace.findByIdAndUpdate(id, { isSoftDeleted: false }, { new: true });
-
-		case "folder":
-			return Workspace.findOneAndUpdate(
-				{ "folders._id": id },
-				{ $set: { "folders.$.isSoftDeleted": false } },
-				{ new: true },
-			);
-
-		case "chat":
-			return Workspace.findOneAndUpdate(
-				{ "folders.chats._id": id },
-				{ $set: { "folders.$[].chats.$[chat].isSoftDeleted": false } },
-				{ arrayFilters: [{ "chat._id": id }], new: true },
-			);
-
-		case "assessment":
-			return Workspace.findOneAndUpdate(
-				{ "folders.assessments._id": id },
-				{ $set: { "folders.$[].assessments.$[assessment].isSoftDeleted": false } },
-				{ arrayFilters: [{ "assessment._id": id }], new: true },
-			);
-
+		case "workspace": {
+			const { data } = await supabase.from("workspaces").update({ is_soft_deleted: false }).eq("id", id).select().single();
+			return data;
+		}
+		case "folder": {
+			const { data } = await supabase.from("folders").update({ is_soft_deleted: false }).eq("id", id).select().single();
+			return data;
+		}
+		case "chat": {
+			const { data } = await supabase.from("folder_chats").update({ is_soft_deleted: false }).eq("id", id).select().single();
+			return data;
+		}
+		case "assessment": {
+			const { data } = await supabase.from("folder_assessments").update({ is_soft_deleted: false }).eq("id", id).select().single();
+			return data;
+		}
 		default:
 			return null;
 	}
 };
+
 const deleteEntityFromTrash = async (entityType, id) => {
 	const handlers = {
 		workspace: async () => {
-			const workspace = await Workspace.findById(id);
-			if (!workspace) throw new ApiError(httpStatus.NOT_FOUND, "Workspace not found");
-			if (workspace.workspaceName === "Default Workspace") {
+			const { data: ws } = await supabase.from("workspaces").select("workspace_name").eq("id", id).single();
+			if (!ws) throw new ApiError(httpStatus.NOT_FOUND, "Workspace not found");
+			if (ws.workspace_name === "Default Workspace") {
 				throw new ApiError(httpStatus.BAD_REQUEST, "Default workspace cannot be deleted!");
 			}
-			return Workspace.findByIdAndDelete(id);
+			await supabase.from("workspaces").delete().eq("id", id);
+			return { success: true };
 		},
-
 		folder: async () => {
-			const workspace = await Workspace.findOne({ "folders._id": id });
-			if (!workspace) throw new ApiError(httpStatus.NOT_FOUND, "Workspace not found");
-			const folder = workspace.folders.id(id);
+			const { data: folder } = await supabase.from("folders").select("folder_name").eq("id", id).single();
 			if (!folder) throw new ApiError(httpStatus.NOT_FOUND, "Folder not found");
-			if (folder.folderName === "Default Folder") {
+			if (folder.folder_name === "Default Folder") {
 				throw new ApiError(httpStatus.BAD_REQUEST, "Default folder cannot be deleted!");
 			}
-			return Workspace.findOneAndUpdate({ "folders._id": id }, { $pull: { folders: { _id: id } } }, { new: true });
+			await supabase.from("folders").delete().eq("id", id);
+			return { success: true };
 		},
-
 		chat: async () => {
-			return Workspace.findOneAndUpdate(
-				{ "folders.chats._id": id },
-				{ $pull: { "folders.$[].chats": { _id: id } } },
-				{ new: true },
-			);
+			await supabase.from("folder_chats").delete().eq("id", id);
+			return { success: true };
 		},
-
 		assessment: async () => {
-			return Workspace.findOneAndUpdate(
-				{ "folders.assessments._id": id },
-				{ $pull: { "folders.$[].assessments": { _id: id } } },
-				{ new: true },
-			);
+			await supabase.from("folder_assessments").delete().eq("id", id);
+			return { success: true };
 		},
 	};
 
@@ -1623,267 +1477,318 @@ const deleteEntityFromTrash = async (entityType, id) => {
 	if (!handler) throw new ApiError(httpStatus.BAD_REQUEST, "Invalid entity type");
 	return await handler();
 };
+
 const getUserTrash = async (userId) => {
-	const workspaces = await Workspace.find({ userId });
+	// Get trashed workspaces
+	const { data: trashedWorkspaces } = await supabase
+		.from("workspaces")
+		.select("id, workspace_name, workspace_description")
+		.eq("user_id", userId)
+		.eq("is_soft_deleted", true);
 
-	let trashedWorkspaces = [];
-	let trashedFolders = [];
-	let trashedChats = [];
-	let trashedAssessments = [];
+	// Get all workspace IDs for this user
+	const { data: allWorkspaces } = await supabase
+		.from("workspaces")
+		.select("id")
+		.eq("user_id", userId);
+	const wsIds = (allWorkspaces || []).map((w) => w.id);
 
-	workspaces.forEach((workspace) => {
-		if (workspace.isSoftDeleted) {
-			trashedWorkspaces.push({
-				workspaceName: workspace.workspaceName,
-				workspaceDescription: workspace.workspaceDescription,
-				_id: workspace._id,
-			});
-		}
+	// Get trashed folders
+	const { data: trashedFolders } = wsIds.length
+		? await supabase
+				.from("folders")
+				.select("id, folder_name")
+				.in("workspace_id", wsIds)
+				.eq("is_soft_deleted", true)
+		: { data: [] };
 
-		workspace.folders.forEach((folder) => {
-			if (folder.isSoftDeleted) {
-				trashedFolders.push({
-					folderName: folder.folderName,
-					_id: folder._id,
-				});
-			}
+	// Get all folder IDs
+	const { data: allFolders } = wsIds.length
+		? await supabase
+				.from("folders")
+				.select("id")
+				.in("workspace_id", wsIds)
+		: { data: [] };
+	const folderIds = (allFolders || []).map((f) => f.id);
 
-			folder.chats.forEach((chat) => {
-				if (chat.isSoftDeleted) {
-					trashedChats.push({
-						chatTitle: chat.chatTitle,
-						_id: chat._id,
-					});
-				}
-			});
+	// Get trashed chats
+	const { data: trashedChats } = folderIds.length
+		? await supabase
+				.from("folder_chats")
+				.select("id, chat_title")
+				.in("folder_id", folderIds)
+				.eq("is_soft_deleted", true)
+		: { data: [] };
 
-			folder.assessments.forEach((assessment) => {
-				if (assessment.isSoftDeleted) {
-					trashedAssessments.push({
-						assessmentTitle: assessment.name || `Assessment`,
-						_id: assessment._id,
-					});
-				}
-			});
-		});
-	});
+	// Get trashed assessments
+	const { data: trashedAssessments } = folderIds.length
+		? await supabase
+				.from("folder_assessments")
+				.select("id, name")
+				.in("folder_id", folderIds)
+				.eq("is_soft_deleted", true)
+		: { data: [] };
 
 	return {
-		workspaces: trashedWorkspaces,
-		folders: trashedFolders,
-		chats: trashedChats,
-		assessments: trashedAssessments,
+		workspaces: (trashedWorkspaces || []).map((w) => ({
+			workspaceName: w.workspace_name,
+			workspaceDescription: w.workspace_description,
+			_id: w.id,
+		})),
+		folders: (trashedFolders || []).map((f) => ({
+			folderName: f.folder_name,
+			_id: f.id,
+		})),
+		chats: (trashedChats || []).map((c) => ({
+			chatTitle: c.chat_title,
+			_id: c.id,
+		})),
+		assessments: (trashedAssessments || []).map((a) => ({
+			assessmentTitle: a.name || "Assessment",
+			_id: a.id,
+		})),
 	};
 };
+
+// ─── AI Proxy ────────────────────────────────────────────────────
+
 const getChatFromAI = async (data) => {
 	const gptURL = `${config.baseUrl}/chat`;
 	const gptResponse = await makeAxiosCall({ url: gptURL, method: "POST", data: data });
 	return gptResponse;
 };
+
+// ─── User Aggregation Queries ────────────────────────────────────
+
 const getCommentsForUser = async (userId) => {
-	const workspaces = await Workspace.find({
-		"folders.chats.comments.userId": userId,
-	});
+	const { data: comments } = await supabase
+		.from("folder_chat_comments")
+		.select(`
+			*,
+			chat:folder_chats(
+				id, folder_id,
+				folder:folders(id, workspace_id)
+			)
+		`)
+		.eq("user_id", userId);
 
-	const comments = [];
-
-	workspaces.forEach((workspace) => {
-		workspace.folders.forEach((folder) => {
-			folder.chats.forEach((chat) => {
-				chat.generalMessages.forEach((message) => {
-					chat.comments.forEach((comment) => {
-						if (comment.userId.toString() === userId.toString() && comment.messageId.toString() === message._id.toString()) {
-							comments.push({
-								workspaceId: workspace._id,
-								folderId: folder._id,
-								chatId: chat._id,
-								messageId: message._id,
-								comment,
-							});
-						}
-					});
-				});
-			});
-		});
-	});
-
-	return comments;
+	return (comments || []).map((c) => ({
+		workspaceId: c.chat?.folder?.workspace_id,
+		folderId: c.chat?.folder_id,
+		chatId: c.chat_id,
+		messageId: c.message_id,
+		comment: c,
+	}));
 };
+
 const getUserChats = async (userId, query) => {
-	const filter = { userId };
-	if (query.workspaceId) filter._id = query.workspaceId;
-	if (query.folderId) filter["folders._id"] = query.folderId;
+	// Build folder filter
+	let folderQuery = supabase
+		.from("folders")
+		.select("id, workspace_id");
 
-	const workspaces = await Workspace.find(filter).lean();
-	if (!workspaces || workspaces.length === 0) {
+	if (query.workspaceId) {
+		folderQuery = folderQuery.eq("workspace_id", query.workspaceId);
+	} else {
+		// Get workspace IDs for user
+		const { data: workspaces } = await supabase
+			.from("workspaces")
+			.select("id")
+			.eq("user_id", userId);
+		if (!workspaces || workspaces.length === 0) {
+			throw new ApiError(httpStatus.NOT_FOUND, "No workspaces found for this user");
+		}
+		folderQuery = folderQuery.in("workspace_id", workspaces.map((w) => w.id));
+	}
+
+	if (query.folderId) {
+		folderQuery = folderQuery.eq("id", query.folderId);
+	}
+
+	const { data: folders } = await folderQuery;
+	if (!folders || folders.length === 0) {
 		throw new ApiError(httpStatus.NOT_FOUND, "No workspaces found for this user");
 	}
 
-	const chats = workspaces
-		.flatMap((workspace) =>
-			workspace.folders
-				.filter((folder) => !query.folderId || folder._id.toString() === query.folderId)
-				.flatMap((folder) =>
-					folder.chats.map((chat) => ({
-						workspaceId: workspace._id,
-						folderId: folder._id,
-						...chat,
-					})),
-				),
-		)
-		.sort((a, b) => b._id.toString().localeCompare(a._id.toString()));
+	const folderIds = folders.map((f) => f.id);
+	const folderMap = {};
+	folders.forEach((f) => { folderMap[f.id] = f; });
 
-	return chats;
+	const { data: chats } = await supabase
+		.from("folder_chats")
+		.select("*")
+		.in("folder_id", folderIds)
+		.order("created_at", { ascending: false });
+
+	return (chats || []).map((chat) => ({
+		workspaceId: folderMap[chat.folder_id]?.workspace_id,
+		folderId: chat.folder_id,
+		...chat,
+	}));
 };
+
 const getUserSitemaps = async (userId, query) => {
-	const filter = { userId };
-	if (query.workspaceId) filter._id = query.workspaceId;
-	if (query.folderId) filter["folders._id"] = query.folderId;
+	let folderQuery = supabase.from("folders").select("id, workspace_id");
 
-	const workspaces = await Workspace.find(filter).populate("folders.sitemaps").lean();
-	if (!workspaces || workspaces.length === 0) {
-		throw new ApiError(httpStatus.NOT_FOUND, "No workspaces found for this user");
+	if (query.workspaceId) {
+		folderQuery = folderQuery.eq("workspace_id", query.workspaceId);
+	} else {
+		const { data: workspaces } = await supabase.from("workspaces").select("id").eq("user_id", userId);
+		if (!workspaces || workspaces.length === 0) throw new ApiError(httpStatus.NOT_FOUND, "No workspaces found for this user");
+		folderQuery = folderQuery.in("workspace_id", workspaces.map((w) => w.id));
 	}
+	if (query.folderId) folderQuery = folderQuery.eq("id", query.folderId);
 
-	const sitemaps = workspaces.flatMap((workspace) =>
-		workspace.folders
-			.filter((folder) => !query.folderId || folder._id.toString() === query.folderId)
-			.flatMap((folder) =>
-				folder.sitemaps.map((sitemap) => ({
-					workspaceId: workspace._id,
-					folderId: folder._id,
-					...sitemap,
-				})),
-			),
-	);
+	const { data: folders } = await folderQuery;
+	if (!folders || folders.length === 0) throw new ApiError(httpStatus.NOT_FOUND, "No workspaces found for this user");
 
-	return sitemaps;
+	const folderIds = folders.map((f) => f.id);
+	const folderMap = {};
+	folders.forEach((f) => { folderMap[f.id] = f; });
+
+	const { data: refs } = await supabase
+		.from("folder_sitemap_references")
+		.select("*, sitemap:sitemap_id(*)")
+		.in("folder_id", folderIds);
+
+	return (refs || []).map((r) => ({
+		workspaceId: folderMap[r.folder_id]?.workspace_id,
+		folderId: r.folder_id,
+		...r.sitemap,
+	}));
 };
+
 const getUserAssessments = async (userId, query) => {
-	const filter = { userId };
-	if (query.workspaceId) filter._id = query.workspaceId;
-	if (query.folderId) filter["folders._id"] = query.folderId;
+	let folderQuery = supabase.from("folders").select("id, workspace_id");
 
-	const workspaces = await Workspace.find(filter).lean();
-	if (!workspaces || workspaces.length === 0) {
-		throw new ApiError(httpStatus.NOT_FOUND, "No workspaces found for this user");
+	if (query.workspaceId) {
+		folderQuery = folderQuery.eq("workspace_id", query.workspaceId);
+	} else {
+		const { data: workspaces } = await supabase.from("workspaces").select("id").eq("user_id", userId);
+		if (!workspaces || workspaces.length === 0) throw new ApiError(httpStatus.NOT_FOUND, "No workspaces found for this user");
+		folderQuery = folderQuery.in("workspace_id", workspaces.map((w) => w.id));
 	}
+	if (query.folderId) folderQuery = folderQuery.eq("id", query.folderId);
 
-	const assessments = workspaces.flatMap((workspace) =>
-		workspace.folders
-			.filter((folder) => !query.folderId || folder._id.toString() === query.folderId)
-			.flatMap((folder) =>
-				folder.assessments.map((assessment) => ({
-					workspaceId: workspace._id,
-					folderId: folder._id,
-					...assessment,
-				})),
-			),
-	);
+	const { data: folders } = await folderQuery;
+	if (!folders || folders.length === 0) throw new ApiError(httpStatus.NOT_FOUND, "No workspaces found for this user");
 
-	return assessments;
+	const folderIds = folders.map((f) => f.id);
+	const folderMap = {};
+	folders.forEach((f) => { folderMap[f.id] = f; });
+
+	const { data: assessments } = await supabase
+		.from("folder_assessments")
+		.select("*")
+		.in("folder_id", folderIds);
+
+	return (assessments || []).map((a) => ({
+		workspaceId: folderMap[a.folder_id]?.workspace_id,
+		folderId: a.folder_id,
+		...a,
+	}));
 };
+
 const getUserWireframes = async (userId, query) => {
-	const filter = { userId };
-	if (query.workspaceId) filter._id = query.workspaceId;
-	if (query.folderId) filter["folders._id"] = query.folderId;
-	if (query.wireframeId) filter["folders.wireframes._id"] = query.wireframeId;
+	let folderQuery = supabase.from("folders").select("id, workspace_id");
 
-	const workspaces = await Workspace.find(filter).lean();
-	if (!workspaces || workspaces.length === 0) {
-		throw new ApiError(httpStatus.NOT_FOUND, "No workspaces found for this user");
+	if (query.workspaceId) {
+		folderQuery = folderQuery.eq("workspace_id", query.workspaceId);
+	} else {
+		const { data: workspaces } = await supabase.from("workspaces").select("id").eq("user_id", userId);
+		if (!workspaces || workspaces.length === 0) throw new ApiError(httpStatus.NOT_FOUND, "No workspaces found for this user");
+		folderQuery = folderQuery.in("workspace_id", workspaces.map((w) => w.id));
 	}
+	if (query.folderId) folderQuery = folderQuery.eq("id", query.folderId);
 
-	const wireframes = workspaces.flatMap((workspace) =>
-		workspace.folders
-			.filter((folder) => !query.folderId || folder._id.toString() === query.folderId)
-			.flatMap((folder) =>
-				folder.wireframes?.map((wireframe) => ({
-					workspaceId: workspace._id,
-					folderId: folder._id,
-					...wireframe,
-				})),
-			),
-	);
+	const { data: folders } = await folderQuery;
+	if (!folders || folders.length === 0) throw new ApiError(httpStatus.NOT_FOUND, "No workspaces found for this user");
 
-	return wireframes;
+	const folderIds = folders.map((f) => f.id);
+	const folderMap = {};
+	folders.forEach((f) => { folderMap[f.id] = f; });
+
+	let wireframeQuery = supabase
+		.from("folder_wireframes")
+		.select("*")
+		.in("folder_id", folderIds);
+
+	if (query.wireframeId) wireframeQuery = wireframeQuery.eq("id", query.wireframeId);
+
+	const { data: wireframes } = await wireframeQuery;
+
+	return (wireframes || []).map((w) => ({
+		workspaceId: folderMap[w.folder_id]?.workspace_id,
+		folderId: w.folder_id,
+		...w,
+	}));
 };
+
+// ─── Sitemap Operations ─────────────────────────────────────────
+
 const addSitemapToWorkspace = async (workspaceId, folderId, body) => {
 	const { sitemapId } = body;
 
-	const workspace = await Workspace.findById(workspaceId);
-	if (!workspace) {
-		throw new ApiError(httpStatus.BAD_REQUEST, "Workspace not found!");
-	}
+	const { data: folder } = await supabase.from("folders").select("id").eq("id", folderId).eq("workspace_id", workspaceId).single();
+	if (!folder) throw new ApiError(httpStatus.BAD_REQUEST, "Folder not found!");
 
-	const folder = workspace.folders.id(folderId);
-	if (!folder) {
-		throw new ApiError(httpStatus.BAD_REQUEST, "Folder not found!");
-	}
+	await supabase.from("folder_sitemap_references").insert({
+		folder_id: folderId,
+		sitemap_id: sitemapId,
+	});
 
-	folder.sitemaps.push(sitemapId);
-	await workspace.save();
-
-	return {
-		success: true,
-		message: "Sitemap added successfully",
-	};
+	return { success: true, message: "Sitemap added successfully" };
 };
+
 const getSitemaps = async (workspaceId, folderId) => {
-	const workspace = await Workspace.findById(workspaceId);
-	if (!workspace) {
-		throw new ApiError(httpStatus.BAD_REQUEST, "Workspace not found!");
-	}
+	const { data: folder } = await supabase.from("folders").select("id").eq("id", folderId).eq("workspace_id", workspaceId).single();
+	if (!folder) throw new ApiError(httpStatus.BAD_REQUEST, "Folder not found!");
 
-	const folder = workspace.folders.id(folderId);
-	if (!folder) {
-		throw new ApiError(httpStatus.BAD_REQUEST, "Folder not found!");
-	}
+	const { data: refs } = await supabase
+		.from("folder_sitemap_references")
+		.select("sitemap_id")
+		.eq("folder_id", folderId);
 
-	const sitemaps = await DigitalPlaybook.find({ _id: { $in: folder.sitemaps } });
-	return sitemaps;
+	if (!refs || refs.length === 0) return [];
+
+	const sitemapIds = refs.map((r) => r.sitemap_id);
+	const { data: sitemaps } = await supabase
+		.from("digital_playbooks")
+		.select("*")
+		.in("id", sitemapIds);
+
+	return sitemaps || [];
 };
+
 const getSitemap = async (workspaceId, folderId, sitemapId) => {
-	const workspace = await Workspace.findById(workspaceId);
-	if (!workspace) {
-		throw new ApiError(httpStatus.BAD_REQUEST, "Workspace not found!");
-	}
+	const { data: folder } = await supabase.from("folders").select("id").eq("id", folderId).eq("workspace_id", workspaceId).single();
+	if (!folder) throw new ApiError(httpStatus.BAD_REQUEST, "Folder not found!");
 
-	const folder = workspace.folders.id(folderId);
-	if (!folder) {
-		throw new ApiError(httpStatus.BAD_REQUEST, "Folder not found!");
-	}
-
-	const sitemap = await DigitalPlaybook.findById(sitemapId);
-	if (!sitemap) {
-		throw new ApiError(httpStatus.BAD_REQUEST, "Sitemap not found!");
-	}
-
+	const { data: sitemap } = await supabase
+		.from("digital_playbooks")
+		.select("*")
+		.eq("id", sitemapId)
+		.single();
+	if (!sitemap) throw new ApiError(httpStatus.BAD_REQUEST, "Sitemap not found!");
 	return sitemap;
 };
+
+// ─── Wireframe CRUD ──────────────────────────────────────────────
+
 const createWireframe = async (workspaceId, folderId, body) => {
 	const { sitemapId, title } = body;
 
-	const workspace = await Workspace.findOne({
-		_id: workspaceId,
-		"folders._id": folderId,
-	});
-	if (!workspace) {
-		throw new ApiError(httpStatus.BAD_REQUEST, "Workspace or Folder not found!");
-	}
+	const { data: workspace } = await supabase.from("workspaces").select("user_id").eq("id", workspaceId).single();
+	if (!workspace) throw new ApiError(httpStatus.BAD_REQUEST, "Workspace or Folder not found!");
 
-	const folder = workspace.folders.id(folderId);
-	if (!folder) {
-		throw new ApiError(httpStatus.BAD_REQUEST, "Folder not found!");
-	}
+	const { data: folder } = await supabase.from("folders").select("id").eq("id", folderId).eq("workspace_id", workspaceId).single();
+	if (!folder) throw new ApiError(httpStatus.BAD_REQUEST, "Folder not found!");
 
-	const sitemap = await DigitalPlaybook.findById(sitemapId);
-	if (!sitemap) {
-		throw new ApiError(httpStatus.BAD_REQUEST, "Sitemap not found!");
-	}
+	const { data: sitemap } = await supabase.from("digital_playbooks").select("*").eq("id", sitemapId).single();
+	if (!sitemap) throw new ApiError(httpStatus.BAD_REQUEST, "Sitemap not found!");
 
 	const initialBody = {
-		user_id: workspace.userId,
+		user_id: workspace.user_id,
 		message: sitemap.message,
 		wireframe_name: title,
 		sitemap_body: sitemap,
@@ -1895,405 +1800,327 @@ const createWireframe = async (workspaceId, folderId, body) => {
 	const wireframeNameArray = parsedMessage[title];
 	const updatedWireframeLayout = assignPageAndLayoutIndexes(wireframeNameArray, 4, 4);
 
-	const wireframeToUpdate = {
-		sitemapId,
-		title,
-		entities: [],
-	};
+	// Create wireframe
+	const { data: wireframe, error: wfErr } = await supabase
+		.from("folder_wireframes")
+		.insert({
+			folder_id: folderId,
+			sitemap_id: sitemapId,
+			title,
+		})
+		.select()
+		.single();
+	if (wfErr) throw new ApiError(httpStatus.BAD_REQUEST, wfErr.message);
 
-	for (const wireframeObj of updatedWireframeLayout) {
-		wireframeToUpdate.entities.push(wireframeObj);
+	// Create entities
+	if (isArrayWithLength(updatedWireframeLayout)) {
+		const entityRows = updatedWireframeLayout.map((e) => ({
+			wireframe_id: wireframe.id,
+			element: e.element,
+			layout: e.layout,
+			text: e.text,
+			description: e.description,
+			image: e.image,
+			type: e.type,
+			chart_type: e.chartType,
+			page_index: e.pageIndex,
+			layout_index: e.layoutIndex,
+			styles: e.styles || null,
+			description_styles: e.descriptionStyles || null,
+			table_data: e.tableData || null,
+			chart_data: e.chartData || null,
+		}));
+		await supabase.from("folder_wireframe_entities").insert(entityRows);
 	}
 
-	folder.wireframes.push(wireframeToUpdate);
-	await workspace.save();
+	// Fetch complete wireframe with entities
+	const { data: fullWireframe } = await supabase
+		.from("folder_wireframes")
+		.select("*, entities:folder_wireframe_entities(*)")
+		.eq("id", wireframe.id)
+		.single();
 
 	return {
 		success: true,
 		message: "Wireframe created successfully",
-		data: folder.wireframes[folder.wireframes.length - 1],
+		data: fullWireframe,
 	};
 };
+
 const getWireframes = async (workspaceId, folderId) => {
-	const workspace = await Workspace.findById(workspaceId);
-	if (!workspace) {
-		throw new ApiError(httpStatus.BAD_REQUEST, "Workspace not found!");
-	}
+	const { data: folder } = await supabase.from("folders").select("id").eq("id", folderId).eq("workspace_id", workspaceId).single();
+	if (!folder) throw new ApiError(httpStatus.BAD_REQUEST, "Folder not found!");
 
-	const folder = workspace.folders.id(folderId);
-	if (!folder) {
-		throw new ApiError(httpStatus.BAD_REQUEST, "Folder not found!");
-	}
-
-	return folder.wireframes;
+	const { data: wireframes } = await supabase
+		.from("folder_wireframes")
+		.select("*")
+		.eq("folder_id", folderId);
+	return wireframes || [];
 };
+
 const getWireframe = async (workspaceId, folderId, wireframeId) => {
-	const workspace = await Workspace.findOne({
-		_id: workspaceId,
-		"folders._id": folderId,
-		"folders.wireframes._id": wireframeId,
-	});
-	if (!workspace) {
-		throw new ApiError(httpStatus.BAD_REQUEST, "Workspace, Folder, or Wireframe not found!");
-	}
-
-	const folder = workspace.folders.id(folderId);
-	if (!folder) {
-		throw new ApiError(httpStatus.BAD_REQUEST, "Folder not found!");
-	}
-
-	const wireframe = folder.wireframes.id(wireframeId);
-	if (!wireframe) {
-		throw new ApiError(httpStatus.BAD_REQUEST, "Wireframe not found!");
-	}
-
+	const { data: wireframe } = await supabase
+		.from("folder_wireframes")
+		.select(`
+			*,
+			entities:folder_wireframe_entities(
+				*,
+				elements:folder_wireframe_elements(*),
+				shapes:folder_wireframe_shapes(*)
+			),
+			comments:folder_wireframe_comments(*)
+		`)
+		.eq("id", wireframeId)
+		.eq("folder_id", folderId)
+		.single();
+	if (!wireframe) throw new ApiError(httpStatus.BAD_REQUEST, "Wireframe not found!");
 	return wireframe;
 };
+
 const updateWireframe = async (workspaceId, folderId, wireframeId, body) => {
-	const workspace = await Workspace.findOne({
-		_id: workspaceId,
-		"folders._id": folderId,
-		"folders.wireframes._id": wireframeId,
-	});
+	const mapped = {};
+	if (body.title !== undefined) mapped.title = body.title;
+	if (body.sitemapId !== undefined) mapped.sitemap_id = body.sitemapId;
 
-	if (!workspace) {
-		throw new ApiError(httpStatus.BAD_REQUEST, "Workspace, Folder, or Wireframe not found!");
-	}
+	const { data, error } = await supabase
+		.from("folder_wireframes")
+		.update(mapped)
+		.eq("id", wireframeId)
+		.eq("folder_id", folderId)
+		.select()
+		.single();
+	if (error || !data) throw new ApiError(httpStatus.BAD_REQUEST, "Wireframe not found!");
 
-	const folder = workspace.folders.id(folderId);
-	if (!folder) {
-		throw new ApiError(httpStatus.BAD_REQUEST, "Folder not found!");
-	}
-
-	const wireframe = folder.wireframes.id(wireframeId);
-	if (!wireframe) {
-		throw new ApiError(httpStatus.BAD_REQUEST, "Wireframe not found!");
-	}
-
-	deepMerge(wireframe, body);
-	await workspace.save();
-
-	return {
-		success: true,
-		message: "Wireframe updated successfully",
-		data: wireframe,
-	};
+	return { success: true, message: "Wireframe updated successfully", data };
 };
+
 const deleteWireframe = async (workspaceId, folderId, wireframeId) => {
-	const workspace = await Workspace.findOne({
-		_id: workspaceId,
-		"folders._id": folderId,
-		"folders.wireframes._id": wireframeId,
-	});
+	const { data: wf } = await supabase.from("folder_wireframes").select("id").eq("id", wireframeId).eq("folder_id", folderId).single();
+	if (!wf) throw new ApiError(httpStatus.BAD_REQUEST, "Wireframe not found!");
 
-	if (!workspace) {
-		throw new ApiError(httpStatus.BAD_REQUEST, "Workspace, Folder, or Wireframe not found!");
-	}
-
-	const folder = workspace.folders.id(folderId);
-	if (!folder) {
-		throw new ApiError(httpStatus.BAD_REQUEST, "Folder not found!");
-	}
-
-	const wireframe = folder.wireframes.id(wireframeId);
-	if (!wireframe) {
-		throw new ApiError(httpStatus.BAD_REQUEST, "Wireframe not found!");
-	}
-
-	folder.wireframes.pull(wireframeId);
-	await workspace.save();
-
+	await supabase.from("folder_wireframes").delete().eq("id", wireframeId);
 	return { success: true, message: "Wireframe deleted successfully" };
 };
+
+// ─── Wireframe Entity CRUD ───────────────────────────────────────
+
 const createWireframeEntity = async (workspaceId, folderId, wireframeId, body) => {
-	const workspace = await Workspace.findOne({
-		_id: workspaceId,
-		"folders._id": folderId,
-		"folders.wireframes._id": wireframeId,
-	});
+	const { data: wf } = await supabase.from("folder_wireframes").select("id").eq("id", wireframeId).eq("folder_id", folderId).single();
+	if (!wf) throw new ApiError(httpStatus.BAD_REQUEST, "Wireframe not found!");
 
-	if (!workspace) {
-		throw new ApiError(httpStatus.BAD_REQUEST, "Workspace, Folder, or Wireframe not found!");
-	}
+	const { data, error } = await supabase
+		.from("folder_wireframe_entities")
+		.insert({
+			wireframe_id: wireframeId,
+			element: body.element,
+			layout: body.layout,
+			text: body.text,
+			description: body.description,
+			image: body.image,
+			type: body.type,
+			chart_type: body.chartType,
+			page_index: body.pageIndex,
+			layout_index: body.layoutIndex,
+			styles: body.styles || null,
+			description_styles: body.descriptionStyles || null,
+			table_data: body.tableData || null,
+			chart_data: body.chartData || null,
+		})
+		.select()
+		.single();
+	if (error) throw new ApiError(httpStatus.BAD_REQUEST, error.message);
 
-	const folder = workspace.folders.id(folderId);
-	if (!folder) {
-		throw new ApiError(httpStatus.BAD_REQUEST, "Folder not found!");
-	}
-
-	const wireframe = folder.wireframes.id(wireframeId);
-	if (!wireframe) {
-		throw new ApiError(httpStatus.BAD_REQUEST, "Wireframe not found!");
-	}
-
-	wireframe.entities.push(body);
-	await workspace.save();
-
-	return {
-		success: true,
-		message: "Wireframe entity created successfully",
-		data: wireframe.entities[wireframe.entities.length - 1],
-	};
+	return { success: true, message: "Wireframe entity created successfully", data };
 };
+
 const bulkCreateWireframeEntity = async (workspaceId, folderId, wireframeId, body) => {
-	const workspace = await Workspace.findOne({
-		_id: workspaceId,
-		"folders._id": folderId,
-		"folders.wireframes._id": wireframeId,
-	});
+	const { data: wf } = await supabase.from("folder_wireframes").select("id").eq("id", wireframeId).eq("folder_id", folderId).single();
+	if (!wf) throw new ApiError(httpStatus.BAD_REQUEST, "Wireframe not found!");
 
-	if (!workspace) {
-		throw new ApiError(httpStatus.BAD_REQUEST, "Workspace, Folder, or Wireframe not found!");
-	}
+	const rows = body.map((e) => ({
+		wireframe_id: wireframeId,
+		element: e.element,
+		layout: e.layout,
+		text: e.text,
+		description: e.description,
+		image: e.image,
+		type: e.type,
+		chart_type: e.chartType,
+		page_index: e.pageIndex,
+		layout_index: e.layoutIndex,
+		styles: e.styles || null,
+		description_styles: e.descriptionStyles || null,
+		table_data: e.tableData || null,
+		chart_data: e.chartData || null,
+	}));
 
-	const folder = workspace.folders.id(folderId);
-	if (!folder) {
-		throw new ApiError(httpStatus.BAD_REQUEST, "Folder not found!");
-	}
+	const { data, error } = await supabase
+		.from("folder_wireframe_entities")
+		.insert(rows)
+		.select();
+	if (error) throw new ApiError(httpStatus.BAD_REQUEST, error.message);
 
-	const wireframe = folder.wireframes.id(wireframeId);
-	if (!wireframe) {
-		throw new ApiError(httpStatus.BAD_REQUEST, "Wireframe not found!");
-	}
-
-	const existingEntityCount = wireframe.entities.length;
-
-	wireframe.entities.push(...body);
-	await workspace.save();
-	const newlyCreatedEntities = wireframe.entities.slice(existingEntityCount);
-
-	return {
-		success: true,
-		message: "Wireframe entities created successfully",
-		data: newlyCreatedEntities,
-	};
+	return { success: true, message: "Wireframe entities created successfully", data };
 };
+
 const bulkUpdateWireframeEntity = async (workspaceId, folderId, wireframeId, body) => {
-	const workspace = await Workspace.findOne({
-		_id: workspaceId,
-		"folders._id": folderId,
-		"folders.wireframes._id": wireframeId,
-	});
+	const { data: wf } = await supabase.from("folder_wireframes").select("id").eq("id", wireframeId).eq("folder_id", folderId).single();
+	if (!wf) throw new ApiError(httpStatus.BAD_REQUEST, "Wireframe not found!");
 
-	if (!workspace) {
-		throw new ApiError(httpStatus.BAD_REQUEST, "Workspace, Folder, or Wireframe not found!");
+	const updatedEntities = [];
+	for (const entity of body) {
+		const mapped = {};
+		if (entity.element !== undefined) mapped.element = entity.element;
+		if (entity.layout !== undefined) mapped.layout = entity.layout;
+		if (entity.text !== undefined) mapped.text = entity.text;
+		if (entity.description !== undefined) mapped.description = entity.description;
+		if (entity.image !== undefined) mapped.image = entity.image;
+		if (entity.type !== undefined) mapped.type = entity.type;
+		if (entity.chartType !== undefined) mapped.chart_type = entity.chartType;
+		if (entity.pageIndex !== undefined) mapped.page_index = entity.pageIndex;
+		if (entity.layoutIndex !== undefined) mapped.layout_index = entity.layoutIndex;
+		if (entity.styles !== undefined) mapped.styles = entity.styles;
+		if (entity.descriptionStyles !== undefined) mapped.description_styles = entity.descriptionStyles;
+		if (entity.tableData !== undefined) mapped.table_data = entity.tableData;
+		if (entity.chartData !== undefined) mapped.chart_data = entity.chartData;
+
+		const { data } = await supabase
+			.from("folder_wireframe_entities")
+			.update(mapped)
+			.eq("id", entity.id)
+			.eq("wireframe_id", wireframeId)
+			.select()
+			.single();
+		if (data) updatedEntities.push(data);
 	}
 
-	const folder = workspace.folders.id(folderId);
-	if (!folder) {
-		throw new ApiError(httpStatus.BAD_REQUEST, "Folder not found!");
-	}
-
-	const wireframe = folder.wireframes.id(wireframeId);
-	if (!wireframe) {
-		throw new ApiError(httpStatus.BAD_REQUEST, "Wireframe not found!");
-	}
-
-	body.forEach((entity) => {
-		const entityToUpdate = wireframe.entities.id(entity.id);
-		if (entityToUpdate) {
-			deepMerge(entityToUpdate, entity);
-		}
-	});
-
-	await workspace.save();
-
-	const updatedEntities = wireframe.entities.filter((entity) =>
-		body.some((updatedEntity) => updatedEntity.id === entity.id),
-	);
-
-	return {
-		success: true,
-		message: "Wireframe entities updated successfully",
-		data: updatedEntities,
-	};
+	return { success: true, message: "Wireframe entities updated successfully", data: updatedEntities };
 };
+
 const bulkDeleteWireframeEntity = async (workspaceId, folderId, wireframeId, entityIds) => {
-	const workspace = await Workspace.findOne({
-		_id: workspaceId,
-		"folders._id": folderId,
-		"folders.wireframes._id": wireframeId,
-	});
+	const { data: wf } = await supabase.from("folder_wireframes").select("id").eq("id", wireframeId).eq("folder_id", folderId).single();
+	if (!wf) throw new ApiError(httpStatus.BAD_REQUEST, "Wireframe not found!");
 
-	if (!workspace) {
-		throw new ApiError(httpStatus.BAD_REQUEST, "Workspace, Folder, or Wireframe not found!");
-	}
-
-	const folder = workspace.folders.id(folderId);
-	if (!folder) {
-		throw new ApiError(httpStatus.BAD_REQUEST, "Folder not found!");
-	}
-
-	const wireframe = folder.wireframes.id(wireframeId);
-	if (!wireframe) {
-		throw new ApiError(httpStatus.BAD_REQUEST, "Wireframe not found!");
-	}
-
-	entityIds.forEach((entityId) => {
-		wireframe.entities.pull(entityId);
-	});
-
-	await workspace.save();
+	await supabase
+		.from("folder_wireframe_entities")
+		.delete()
+		.in("id", entityIds)
+		.eq("wireframe_id", wireframeId);
 
 	return { success: true, message: "Wireframe entities deleted successfully" };
 };
+
 const updateWireframeEntity = async (workspaceId, folderId, wireframeId, entityId, body) => {
-	const workspace = await Workspace.findOne({
-		_id: workspaceId,
-		"folders._id": folderId,
-		"folders.wireframes._id": wireframeId,
-	});
+	const mapped = {};
+	if (body.element !== undefined) mapped.element = body.element;
+	if (body.layout !== undefined) mapped.layout = body.layout;
+	if (body.text !== undefined) mapped.text = body.text;
+	if (body.description !== undefined) mapped.description = body.description;
+	if (body.image !== undefined) mapped.image = body.image;
+	if (body.type !== undefined) mapped.type = body.type;
+	if (body.chartType !== undefined) mapped.chart_type = body.chartType;
+	if (body.pageIndex !== undefined) mapped.page_index = body.pageIndex;
+	if (body.layoutIndex !== undefined) mapped.layout_index = body.layoutIndex;
+	if (body.styles !== undefined) mapped.styles = body.styles;
+	if (body.descriptionStyles !== undefined) mapped.description_styles = body.descriptionStyles;
+	if (body.tableData !== undefined) mapped.table_data = body.tableData;
+	if (body.chartData !== undefined) mapped.chart_data = body.chartData;
 
-	if (!workspace) {
-		throw new ApiError(httpStatus.BAD_REQUEST, "Workspace, Folder, or Wireframe not found!");
-	}
+	const { data, error } = await supabase
+		.from("folder_wireframe_entities")
+		.update(mapped)
+		.eq("id", entityId)
+		.eq("wireframe_id", wireframeId)
+		.select()
+		.single();
+	if (error || !data) throw new ApiError(httpStatus.BAD_REQUEST, "Entity not found!");
 
-	const folder = workspace.folders.id(folderId);
-	if (!folder) {
-		throw new ApiError(httpStatus.BAD_REQUEST, "Folder not found!");
-	}
-
-	const wireframe = folder.wireframes.id(wireframeId);
-	if (!wireframe) {
-		throw new ApiError(httpStatus.BAD_REQUEST, "Wireframe not found!");
-	}
-
-	const entity = wireframe.entities.id(entityId);
-	if (!entity) {
-		throw new ApiError(httpStatus.BAD_REQUEST, "Entity not found!");
-	}
-
-	Object.keys(body).forEach((key) => {
-		entity[key] = body[key];
-	});
-
-	await workspace.save();
-
-	return {
-		success: true,
-		message: "Wireframe entity updated successfully",
-		data: entity,
-	};
+	return { success: true, message: "Wireframe entity updated successfully", data };
 };
+
 const deleteWireframeEntity = async (workspaceId, folderId, wireframeId, entityId) => {
-	const workspace = await Workspace.findOne({
-		_id: workspaceId,
-		"folders._id": folderId,
-		"folders.wireframes._id": wireframeId,
-	});
+	const { data } = await supabase
+		.from("folder_wireframe_entities")
+		.select("id")
+		.eq("id", entityId)
+		.eq("wireframe_id", wireframeId)
+		.single();
+	if (!data) throw new ApiError(httpStatus.BAD_REQUEST, "Entity not found!");
 
-	if (!workspace) {
-		throw new ApiError(httpStatus.BAD_REQUEST, "Workspace, Folder, or Wireframe not found!");
-	}
-
-	const folder = workspace.folders.id(folderId);
-	if (!folder) {
-		throw new ApiError(httpStatus.BAD_REQUEST, "Folder not found!");
-	}
-
-	const wireframe = folder.wireframes.id(wireframeId);
-	if (!wireframe) {
-		throw new ApiError(httpStatus.BAD_REQUEST, "Wireframe not found!");
-	}
-
-	const entity = wireframe.entities.id(entityId);
-	if (!entity) {
-		throw new ApiError(httpStatus.BAD_REQUEST, "Entity not found!");
-	}
-
-	wireframe.entities.pull(entityId);
-	await workspace.save();
-
+	await supabase.from("folder_wireframe_entities").delete().eq("id", entityId);
 	return { success: true, message: "Wireframe entity deleted successfully" };
 };
+
 const uploadEntityImage = async (workspaceId, folderId, wireframeId, entityId, file) => {
-	const workspace = await Workspace.findOne({
-		_id: workspaceId,
-		"folders._id": folderId,
-		"folders.wireframes._id": wireframeId,
-	});
-
-	if (!workspace) {
-		throw new ApiError(httpStatus.BAD_REQUEST, "Workspace, Folder, or Wireframe not found!");
-	}
-
-	const folder = workspace.folders.id(folderId);
-	if (!folder) {
-		throw new ApiError(httpStatus.BAD_REQUEST, "Folder not found!");
-	}
-
-	const wireframe = folder.wireframes.id(wireframeId);
-	if (!wireframe) {
-		throw new ApiError(httpStatus.BAD_REQUEST, "Wireframe not found!");
-	}
-
-	const entity = wireframe.entities.id(entityId);
-	if (!entity) {
-		throw new ApiError(httpStatus.BAD_REQUEST, "Entity not found!");
-	}
-
-	entity.image = file.filename;
-	await workspace.save();
+	const { data, error } = await supabase
+		.from("folder_wireframe_entities")
+		.update({ image: file.filename })
+		.eq("id", entityId)
+		.eq("wireframe_id", wireframeId)
+		.select()
+		.single();
+	if (error || !data) throw new ApiError(httpStatus.BAD_REQUEST, "Entity not found!");
 
 	return {
 		success: true,
 		message: "Wireframe entity image uploaded successfully",
-		data: entity,
+		data,
 		image: file.filename,
 	};
 };
+
+// ─── Assessment Report Generation ────────────────────────────────
+
 const generateAssessmentReport = async (workspaceId, folderId, assessmentId) => {
-	const workspace = await Workspace.findOne({
-		_id: workspaceId,
-		"folders._id": folderId,
-		"folders.assessments._id": assessmentId,
-	});
-	if (!workspace) {
-		throw new ApiError(httpStatus.BAD_REQUEST, "Workspace, Folder, or Assessment not found!");
-	}
+	const { data: workspace } = await supabase.from("workspaces").select("user_id").eq("id", workspaceId).single();
+	if (!workspace) throw new ApiError(httpStatus.BAD_REQUEST, "Workspace not found!");
 
-	const folder = workspace.folders.id(folderId);
-	if (!folder) {
-		throw new ApiError(httpStatus.BAD_REQUEST, "Folder not found!");
-	}
+	const { data: assessment } = await supabase
+		.from("folder_assessments")
+		.select("id, name")
+		.eq("id", assessmentId)
+		.eq("folder_id", folderId)
+		.single();
+	if (!assessment) throw new ApiError(httpStatus.BAD_REQUEST, "Assessment not found!");
 
-	const assessment = folder.assessments.id(assessmentId);
-	if (!assessment) {
-		throw new ApiError(httpStatus.BAD_REQUEST, "Assessment not found!");
-	}
+	// Get report and sub-report title
+	const { data: report } = await supabase
+		.from("folder_assessment_reports")
+		.select("id, report_title, folder_assessment_sub_reports(report_title)")
+		.eq("assessment_id", assessmentId)
+		.order("created_at", { ascending: true })
+		.limit(1)
+		.single();
 
-	const assessmentTitle = assessment.report[0].subReport[0].ReportTitle;
-	if (!assessmentTitle) {
-		throw new ApiError(httpStatus.BAD_REQUEST, "Assessment title not found!");
-	}
+	const assessmentTitle = report?.folder_assessment_sub_reports?.[0]?.report_title || assessment.name;
 
-	const surveyInfoToString = formatQuestionsToString(folder.surveyInfo);
+	// Get survey & business info for the folder
+	const { data: surveyInfo } = await supabase.from("folder_survey_info").select("*").eq("folder_id", folderId);
+	const { data: businessInfo } = await supabase.from("folder_business_info").select("*").eq("folder_id", folderId);
+
+	const surveyInfoToString = formatQuestionsToString(surveyInfo || []);
 
 	const reportPayload = {
-		user_id: workspace.userId,
-		chat_id: assessment._id,
+		user_id: workspace.user_id,
+		chat_id: assessmentId,
 		assessment_name: assessmentTitle,
 		general_info: surveyInfoToString,
-		business_info: folder.businessInfo,
+		business_info: businessInfo || [],
 	};
 
 	const gptURL = `${config.baseUrl}/generate_all_report`;
 	const gptResponse = await makeAxiosCall({ url: gptURL, method: "POST", data: reportPayload });
-
-	if (!gptResponse) {
-		throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, "Error generating assessment report");
-	}
+	if (!gptResponse) throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, "Error generating assessment report");
 
 	const pdfFileName = `${Date.now()}_assessment_report.pdf`;
 	const pdfFilePath = path.resolve(process.cwd(), "public/uploads", pdfFileName);
-
 	convertMarkdownToPDF(gptResponse.message, pdfFilePath);
 
-	assessment.report[0].ReportTitle = gptResponse.title;
-	assessment.report[0].finalReport = gptResponse.message;
-	assessment.report[0].finalReportURL = `/uploads/${pdfFileName}`;
-
-	await workspace.save();
+	await supabase.from("folder_assessment_reports").update({
+		report_title: gptResponse.title,
+		final_report: gptResponse.message,
+		final_report_url: `/uploads/${pdfFileName}`,
+	}).eq("id", report.id);
 
 	return {
 		success: true,
@@ -2305,58 +2132,54 @@ const generateAssessmentReport = async (workspaceId, folderId, assessmentId) => 
 		},
 	};
 };
+
 const generateAssessmentReports = async (workspaceId, folderId) => {
-	const workspace = await Workspace.findOne({
-		_id: workspaceId,
-		"folders._id": folderId,
-	});
-	if (!workspace) {
-		throw new ApiError(httpStatus.BAD_REQUEST, "Workspace, Folder, or Assessment not found!");
-	}
+	const { data: workspace } = await supabase.from("workspaces").select("user_id").eq("id", workspaceId).single();
+	if (!workspace) throw new ApiError(httpStatus.BAD_REQUEST, "Workspace not found!");
 
-	const folder = workspace.folders.id(folderId);
-	if (!folder) {
-		throw new ApiError(httpStatus.BAD_REQUEST, "Folder not found!");
-	}
+	const { data: assessments } = await supabase
+		.from("folder_assessments")
+		.select("id, name")
+		.eq("folder_id", folderId);
+	if (!isArrayWithLength(assessments)) throw new ApiError(httpStatus.BAD_REQUEST, "Assessments not found!");
 
-	const assessments = folder.assessments;
-	if (!isArrayWithLength(assessments)) {
-		throw new ApiError(httpStatus.BAD_REQUEST, "Assessments not found!");
-	}
+	const { data: surveyInfo } = await supabase.from("folder_survey_info").select("*").eq("folder_id", folderId);
+	const { data: businessInfo } = await supabase.from("folder_business_info").select("*").eq("folder_id", folderId);
+	const surveyInfoToString = formatQuestionsToString(surveyInfo || []);
 
 	for (const assessment of assessments) {
-		const assessmentTitle = assessment.report[0].subReport[0].ReportTitle;
-		if (!assessmentTitle) {
-			continue;
-		}
+		const { data: report } = await supabase
+			.from("folder_assessment_reports")
+			.select("id, folder_assessment_sub_reports(report_title)")
+			.eq("assessment_id", assessment.id)
+			.order("created_at", { ascending: true })
+			.limit(1)
+			.maybeSingle();
 
-		const surveyInfoToString = formatQuestionsToString(folder.surveyInfo);
+		const assessmentTitle = report?.folder_assessment_sub_reports?.[0]?.report_title;
+		if (!assessmentTitle) continue;
 
 		const reportPayload = {
-			user_id: workspace.userId,
-			chat_id: assessment._id,
+			user_id: workspace.user_id,
+			chat_id: assessment.id,
 			assessment_name: assessmentTitle,
 			general_info: surveyInfoToString,
-			business_info: folder.businessInfo,
+			business_info: businessInfo || [],
 		};
 
 		const gptURL = `${config.baseUrl}/generate_all_report`;
 		const gptResponse = await makeAxiosCall({ url: gptURL, method: "POST", data: reportPayload });
-
-		if (!gptResponse) {
-			break;
-		}
+		if (!gptResponse) break;
 
 		const pdfFileName = `${Date.now()}_assessment_report.pdf`;
 		const pdfFilePath = path.resolve(process.cwd(), "public/uploads", pdfFileName);
-
 		convertMarkdownToPDF(gptResponse.message, pdfFilePath);
 
-		assessment.report[0].ReportTitle = gptResponse.title;
-		assessment.report[0].finalReport = gptResponse.message;
-		assessment.report[0].finalReportURL = `/uploads/${pdfFileName}`;
-
-		await workspace.save();
+		await supabase.from("folder_assessment_reports").update({
+			report_title: gptResponse.title,
+			final_report: gptResponse.message,
+			final_report_url: `/uploads/${pdfFileName}`,
+		}).eq("id", report.id);
 	}
 
 	return {
@@ -2365,306 +2188,261 @@ const generateAssessmentReports = async (workspaceId, folderId) => {
 		data: assessments,
 	};
 };
+
+// ─── Default Workspace ───────────────────────────────────────────
+
 const createDefaultWorkspace = async (userId) => {
-	const existingWorkspace = await Workspace.findOne({
-		userId,
-		workspaceName: "Default Workspace",
+	const { data: existing } = await supabase
+		.from("workspaces")
+		.select("*")
+		.eq("user_id", userId)
+		.eq("workspace_name", "Default Workspace")
+		.maybeSingle();
+
+	if (existing) return existing;
+
+	const { data: workspace, error } = await supabase
+		.from("workspaces")
+		.insert({
+			user_id: userId,
+			workspace_name: "Default Workspace",
+			workspace_description: "This is your default workspace",
+			is_active: true,
+		})
+		.select()
+		.single();
+	if (error) throw new ApiError(httpStatus.BAD_REQUEST, error.message);
+
+	// Create default folder
+	await supabase.from("folders").insert({
+		workspace_id: workspace.id,
+		folder_name: "Default Folder",
+		is_active: true,
 	});
 
-	if (existingWorkspace) return existingWorkspace;
-
-	const workspace = new Workspace({
-		userId,
-		workspaceName: "Default Workspace",
-		workspaceDescription: "This is your default workspace",
-		isActive: true,
-		folders: [
-			{
-				folderName: "Default Folder",
-				isActive: true,
-			},
-		],
-	});
-
-	await workspace.save();
 	return workspace;
 };
-const getUserDashboardStats = async (userId) => {
-	const workspaces = await Workspace.aggregate([
-		{
-			$match: { userId, isSoftDeleted: false },
-		},
-		{
-			$project: {
-				workspaceName: 1,
-				workspaceDescription: 1,
-				isActive: 1,
-				folders: {
-					$filter: {
-						input: "$folders",
-						as: "folder",
-						cond: { $eq: ["$$folder.isSoftDeleted", false] },
-					},
-				},
-			},
-		},
-	]);
 
-	const activeWorkspace = workspaces.find((workspace) => workspace.isActive);
+// ─── Dashboard Stats ─────────────────────────────────────────────
+
+const getUserDashboardStats = async (userId) => {
+	// Get non-deleted workspaces
+	const { data: workspaces } = await supabase
+		.from("workspaces")
+		.select("id, workspace_name, workspace_description, is_active")
+		.eq("user_id", userId)
+		.eq("is_soft_deleted", false);
+
+	if (!workspaces) return { activeWorkspace: "No Active Workspace", activeProject: "No Active Project", activeSubscription: "Free", totalWorkspaces: 0, totalProjects: 0, workspaces: [] };
+
+	const wsIds = workspaces.map((w) => w.id);
+
+	// Get non-deleted folders
+	const { data: folders } = wsIds.length
+		? await supabase
+				.from("folders")
+				.select("id, workspace_id, folder_name, is_active")
+				.in("workspace_id", wsIds)
+				.eq("is_soft_deleted", false)
+		: { data: [] };
+
+	const activeWorkspace = workspaces.find((w) => w.is_active);
 	const totalWorkspaces = workspaces.length;
 
-	const activeProject = activeWorkspace?.folders.find((folder) => folder.isActive);
-	const activeProjectName = activeProject ? activeProject.folderName : "No Active Project";
-	const totalProjects = workspaces.reduce((acc, workspace) => acc + workspace.folders.length, 0);
+	const activeFolders = (folders || []).filter((f) => f.workspace_id === activeWorkspace?.id);
+	const activeProject = activeFolders.find((f) => f.is_active);
+	const totalProjects = (folders || []).length;
 
-	const workspaceDetails = workspaces.map((workspace) => ({
-		id: workspace._id,
-		workspaceName: workspace.workspaceName,
-		workspaceDescription: workspace.workspaceDescription,
-		isActive: workspace.isActive,
-		folders: workspace.folders.map((folder) => ({
-			id: folder._id,
-			folderName: folder.folderName,
-			isActive: folder.isActive,
-		})),
+	// Build workspace details with folders
+	const foldersByWs = {};
+	(folders || []).forEach((f) => {
+		if (!foldersByWs[f.workspace_id]) foldersByWs[f.workspace_id] = [];
+		foldersByWs[f.workspace_id].push({
+			id: f.id,
+			folderName: f.folder_name,
+			isActive: f.is_active,
+		});
+	});
+
+	const workspaceDetails = workspaces.map((w) => ({
+		id: w.id,
+		workspaceName: w.workspace_name,
+		workspaceDescription: w.workspace_description,
+		isActive: w.is_active,
+		folders: foldersByWs[w.id] || [],
 	}));
 
 	return {
-		activeWorkspace: activeWorkspace?.workspaceName || "No Active Workspace",
-		activeProject: activeProjectName,
+		activeWorkspace: activeWorkspace?.workspace_name || "No Active Workspace",
+		activeProject: activeProject?.folder_name || "No Active Project",
 		activeSubscription: "Free",
 		totalWorkspaces,
 		totalProjects,
 		workspaces: workspaceDetails,
 	};
 };
+
+// ─── Folder Entities (Dashboard Summary) ─────────────────────────
+
 const getFolderEntities = async (workspaceId, folderId) => {
-	const pipeline = [
-		{
-			$match: {
-				_id: ObjectID(workspaceId),
-				isSoftDeleted: false,
-			},
-		},
-		{
-			$unwind: "$folders",
-		},
-		{
-			$match: {
-				"folders._id": ObjectID(folderId),
-				"folders.isSoftDeleted": false,
-			},
-		},
-		{
-			$project: {
-				_id: 0,
-				workspaceName: "$workspaceName",
-				folderName: "$folders.folderName",
-				chats: {
-					$slice: [
-						{
-							$filter: {
-								input: "$folders.chats",
-								as: "chat",
-								cond: {
-									$eq: ["$$chat.isSoftDeleted", false],
-								},
-							},
-						},
-						5,
-					],
-				},
-				assessments: {
-					$slice: [
-						{
-							$filter: {
-								input: "$folders.assessments",
-								as: "assessment",
-								cond: {
-									$eq: ["$$assessment.isSoftDeleted", false],
-								},
-							},
-						},
-						5,
-					],
-				},
-				wireframes: {
-					$slice: [
-						{
-							$sortArray: {
-								input: "$folders.wireframes",
-								sortBy: { createdAt: -1 },
-							},
-						},
-						5,
-					],
-				},
-				sitemaps: {
-					$slice: [
-						{
-							$sortArray: {
-								input: "$folders.sitemaps",
-								sortBy: { _id: -1 },
-							},
-						},
-						5,
-					],
-				},
-			},
-		},
-		{
-			$lookup: {
-				from: "digitalplaybooks",
-				localField: "sitemaps",
-				foreignField: "_id",
-				as: "sitemapDetails",
-			},
-		},
-		{
-			$project: {
-				workspaceName: 1,
-				folderName: 1,
-				chats: {
-					$map: {
-						input: "$chats",
-						as: "chat",
-						in: {
-							id: "$$chat._id",
-							chatTitle: "$$chat.chatTitle",
-							createdAt: "$$chat.createdAt",
-						},
-					},
-				},
-				assessments: {
-					$map: {
-						input: "$assessments",
-						as: "assessment",
-						in: {
-							id: "$$assessment._id",
-							name: {
-								$ifNull: ["$$assessment.name", "Assessment"],
-							},
-							createdAt: "$$assessment.createdAt",
-						},
-					},
-				},
-				wireframes: {
-					$map: {
-						input: "$wireframes",
-						as: "wireframe",
-						in: {
-							id: "$$wireframe._id",
-							title: "$$wireframe.title",
-							createdAt: "$$wireframe.createdAt",
-						},
-					},
-				},
-				sitemaps: {
-					$map: {
-						input: "$sitemapDetails",
-						as: "sitemap",
-						in: {
-							id: "$$sitemap._id",
-							name: "$$sitemap.name",
-							createdAt: "$$sitemap.createdAt",
-						},
-					},
-				},
-			},
-		},
-	];
+	// Verify workspace & folder
+	const { data: ws } = await supabase.from("workspaces").select("workspace_name").eq("id", workspaceId).eq("is_soft_deleted", false).single();
+	if (!ws) return [];
 
-	const folderEntities = await Workspace.aggregate(pipeline);
-	return folderEntities;
+	const { data: folder } = await supabase.from("folders").select("id, folder_name").eq("id", folderId).eq("workspace_id", workspaceId).eq("is_soft_deleted", false).single();
+	if (!folder) return [];
+
+	// Get latest 5 chats (non-deleted)
+	const { data: chats } = await supabase
+		.from("folder_chats")
+		.select("id, chat_title, created_at")
+		.eq("folder_id", folderId)
+		.eq("is_soft_deleted", false)
+		.order("created_at", { ascending: false })
+		.limit(5);
+
+	// Get latest 5 assessments (non-deleted)
+	const { data: assessments } = await supabase
+		.from("folder_assessments")
+		.select("id, name, created_at")
+		.eq("folder_id", folderId)
+		.eq("is_soft_deleted", false)
+		.order("created_at", { ascending: false })
+		.limit(5);
+
+	// Get latest 5 wireframes
+	const { data: wireframes } = await supabase
+		.from("folder_wireframes")
+		.select("id, title, created_at")
+		.eq("folder_id", folderId)
+		.order("created_at", { ascending: false })
+		.limit(5);
+
+	// Get latest 5 sitemaps
+	const { data: sitemapRefs } = await supabase
+		.from("folder_sitemap_references")
+		.select("sitemap_id")
+		.eq("folder_id", folderId)
+		.order("created_at", { ascending: false })
+		.limit(5);
+
+	let sitemaps = [];
+	if (sitemapRefs && sitemapRefs.length > 0) {
+		const sitemapIds = sitemapRefs.map((r) => r.sitemap_id);
+		const { data: sitemapData } = await supabase
+			.from("digital_playbooks")
+			.select("id, name, created_at")
+			.in("id", sitemapIds);
+		sitemaps = (sitemapData || []).map((s) => ({ id: s.id, name: s.name, createdAt: s.created_at }));
+	}
+
+	return [{
+		workspaceName: ws.workspace_name,
+		folderName: folder.folder_name,
+		chats: (chats || []).map((c) => ({ id: c.id, chatTitle: c.chat_title, createdAt: c.created_at })),
+		assessments: (assessments || []).map((a) => ({ id: a.id, name: a.name || "Assessment", createdAt: a.created_at })),
+		wireframes: (wireframes || []).map((w) => ({ id: w.id, title: w.title, createdAt: w.created_at })),
+		sitemaps,
+	}];
 };
+
+// ─── Message Reactions (Like / Dislike) ──────────────────────────
+
 const toggleMessageLike = async (workspaceId, folderId, chatId, messageId, userId) => {
-	const workspace = await Workspace.findOne({
-		_id: workspaceId,
-		"folders._id": folderId,
-		"folders.chats._id": chatId,
-		"folders.chats.generalMessages._id": messageId,
-	});
+	// Check for existing reaction
+	const { data: existing } = await supabase
+		.from("chat_message_reactions")
+		.select("id, type")
+		.eq("message_id", messageId)
+		.eq("user_id", userId)
+		.maybeSingle();
 
-	if (!workspace) {
-		throw new ApiError(httpStatus.NOT_FOUND, "Workspace, Folder, Chat, or Message not found");
-	}
-
-	const folder = workspace.folders.id(folderId);
-	const chat = folder.chats.id(chatId);
-	const message = chat.generalMessages.id(messageId);
-	const existingReactionIndex = message.reactions.findIndex((reaction) => reaction.user.toString() === userId.toString());
-	if (existingReactionIndex !== -1) {
-		const existingReaction = message.reactions[existingReactionIndex];
-
-		if (existingReaction.type === "like") {
-			message.reactions.splice(existingReactionIndex, 1);
+	if (existing) {
+		if (existing.type === "like") {
+			// Remove reaction
+			await supabase.from("chat_message_reactions").delete().eq("id", existing.id);
 		} else {
-			existingReaction.type = "like";
+			// Change to like
+			await supabase.from("chat_message_reactions").update({ type: "like" }).eq("id", existing.id);
 		}
 	} else {
-		message.reactions.push({ user: userId, type: "like" });
+		// Insert new like
+		await supabase.from("chat_message_reactions").insert({
+			message_id: messageId,
+			user_id: userId,
+			type: "like",
+		});
 	}
 
-	await workspace.save();
+	// Get message with updated reactions
+	const { data: message } = await supabase
+		.from("folder_chat_messages")
+		.select("*, reactions:chat_message_reactions(*)")
+		.eq("id", messageId)
+		.single();
+
 	return { success: true, message: "Reaction updated", data: message };
 };
+
 const toggleMessageDislike = async (workspaceId, folderId, chatId, messageId, userId) => {
-	const workspace = await Workspace.findOne({
-		_id: workspaceId,
-		"folders._id": folderId,
-		"folders.chats._id": chatId,
-		"folders.chats.generalMessages._id": messageId,
-	});
+	const { data: existing } = await supabase
+		.from("chat_message_reactions")
+		.select("id, type")
+		.eq("message_id", messageId)
+		.eq("user_id", userId)
+		.maybeSingle();
 
-	if (!workspace) {
-		throw new ApiError(httpStatus.NOT_FOUND, "Workspace, Folder, Chat, or Message not found");
-	}
-
-	const folder = workspace.folders.id(folderId);
-	const chat = folder.chats.id(chatId);
-	const message = chat.generalMessages.id(messageId);
-	const existingReactionIndex = message.reactions.findIndex((reaction) => reaction.user.toString() === userId.toString());
-	if (existingReactionIndex !== -1) {
-		const existingReaction = message.reactions[existingReactionIndex];
-
-		if (existingReaction.type === "dislike") {
-			message.reactions.splice(existingReactionIndex, 1);
+	if (existing) {
+		if (existing.type === "dislike") {
+			await supabase.from("chat_message_reactions").delete().eq("id", existing.id);
 		} else {
-			existingReaction.type = "dislike";
+			await supabase.from("chat_message_reactions").update({ type: "dislike" }).eq("id", existing.id);
 		}
 	} else {
-		message.reactions.push({ user: userId, type: "dislike" });
+		await supabase.from("chat_message_reactions").insert({
+			message_id: messageId,
+			user_id: userId,
+			type: "dislike",
+		});
 	}
 
-	await workspace.save();
+	const { data: message } = await supabase
+		.from("folder_chat_messages")
+		.select("*, reactions:chat_message_reactions(*)")
+		.eq("id", messageId)
+		.single();
+
 	return { success: true, message: "Reaction updated", data: message };
 };
+
+// ─── Move Chat Between Folders ───────────────────────────────────
+
 const moveChatToFolderOfSameWorkspace = async (workspaceId, sourceFolderId, chatId, newFolderId) => {
-	const workspace = await Workspace.findOne({
-		_id: workspaceId,
-		"folders._id": sourceFolderId,
-		"folders.chats._id": chatId,
-	});
+	// Verify source folder and chat
+	const { data: chat } = await supabase
+		.from("folder_chats")
+		.select("id")
+		.eq("id", chatId)
+		.eq("folder_id", sourceFolderId)
+		.single();
+	if (!chat) throw new ApiError(httpStatus.NOT_FOUND, "Workspace, Folder, or Chat not found");
 
-	if (!workspace) {
-		throw new ApiError(httpStatus.NOT_FOUND, "Workspace, Folder, or Chat not found");
-	}
+	// Verify target folder exists in same workspace
+	const { data: targetFolder } = await supabase
+		.from("folders")
+		.select("id")
+		.eq("id", newFolderId)
+		.eq("workspace_id", workspaceId)
+		.single();
+	if (!targetFolder) throw new ApiError(httpStatus.NOT_FOUND, "Target folder not found in workspace");
 
-	const sourceFolder = workspace.folders.id(sourceFolderId);
-	const chat = sourceFolder.chats.id(chatId);
-
-	sourceFolder.chats.pull(chatId);
-
-	const targetFolder = workspace.folders.id(newFolderId);
-	if (!targetFolder) {
-		throw new ApiError(httpStatus.NOT_FOUND, "Target folder not found in workspace");
-	}
-	targetFolder.chats.push(chat);
-
-	await workspace.save();
+	// Move chat by updating folder_id
+	await supabase.from("folder_chats").update({ folder_id: newFolderId }).eq("id", chatId);
 
 	return { success: true, message: "Chat moved successfully" };
 };
+
+// ─── Exports ─────────────────────────────────────────────────────
 
 module.exports = {
 	create,

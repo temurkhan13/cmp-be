@@ -1,307 +1,244 @@
-const httpStatus = require('http-status');
-const ApiError = require('../../utils/ApiError');
-const { tokenTypes } = require('../../config/tokens');
-const Assessment = require('./entity/modal');
-const Token = require('../tokens/entity/model');
-const config = require('../../config/config');
-const { default: axios } = require('axios');
+const httpStatus = require("http-status");
+const ApiError = require("../../utils/ApiError");
+const config = require("../../config/config");
+const { default: axios } = require("axios");
+const supabase = require("../../config/supabase");
 
 const createAssessment = async (body) => {
-  const { messages, user, generalInfo, bussinessInfo, assessmentName } = body;
+	const { messages, user, generalInfo, bussinessInfo, assessmentName } = body;
 
-  const assessment = await Assessment.create({
-    user,
-    messages,
-    // generalInfo,
-    // bussinessInfo,
-    // assessmentName,
-  });
-  console.log('assessment', assessment);
+	// Create assessment
+	const { data: assessment, error } = await supabase.from("assessments").insert({ user_id: user }).select().single();
+	if (error) throw error;
 
-  const chatHistory = await Assessment.findById(assessment._id);
+	// Insert initial messages
+	if (messages && messages.length > 0) {
+		const msgs = messages.map((m) => ({
+			assessment_id: assessment.id,
+			text: m.text || null,
+			sender_id: m.sender || user,
+			pdf_path: m.pdfPath || null,
+			general_info: m.generalInfo || null,
+			survey_type: m.surType || null,
+			assessment_name: m.assessmentName || null,
+			check_type: m.checkType || null,
+		}));
+		await supabase.from("assessment_messages").insert(msgs);
+	}
 
-  try {
-    const message = messages[0];
-    const textMessages = chatHistory.messages
-      .filter((msg) => msg.text)
-      .map((msg) => msg.text);
+	try {
+		const message = messages[0];
+		const { data: allMsgs } = await supabase.from("assessment_messages").select("text").eq("assessment_id", assessment.id);
+		const textMessages = (allMsgs || []).filter((m) => m.text).map((m) => m.text);
 
-    const apiBody = {
-      user_id: assessment.user,
-      chat_id: assessment._id,
-      message: message.text,
-      history: textMessages,
-      general_info: generalInfo,
-      bussiness_info: bussinessInfo,
-      assessment_name: assessmentName,
-    };
+		const gptResponse = await axios.post(`${config.baseUrl}/assesment-chat`, {
+			user_id: user,
+			chat_id: assessment.id,
+			message: message.text,
+			history: textMessages,
+			general_info: generalInfo,
+			bussiness_info: bussinessInfo,
+			assessment_name: assessmentName,
+		});
 
-    console.log('body axios', apiBody);
-    const gptResponse = await axios.post(
-      `${config.baseUrl}/assesment-chat`,
-      apiBody
-    );
-    console.log('gptResponse.data', gptResponse.data);
+		// Add AI response
+		await supabase.from("assessment_messages").insert({
+			assessment_id: assessment.id,
+			text: gptResponse.data.message,
+		});
 
-    const gptMessage = {
-      text: gptResponse.data.message,
-    };
-
-    const updatedAssessment = await Assessment.findByIdAndUpdate(
-      assessment._id,
-      { $push: { messages: gptMessage } },
-      { new: true }
-    );
-
-    return updatedAssessment;
-  } catch (error) {
-    console.error('Failed to send data to AI server:', error.message);
-    throw new Error('AI server error');
-  }
+		// Return full assessment with messages
+		const { data: fullAssessment } = await supabase.from("assessments").select().eq("id", assessment.id).single();
+		const { data: finalMsgs } = await supabase.from("assessment_messages").select().eq("assessment_id", assessment.id).order("created_at");
+		fullAssessment.messages = finalMsgs || [];
+		return fullAssessment;
+	} catch (err) {
+		console.error("Failed to send data to AI server:", err.message);
+		throw new Error("AI server error");
+	}
 };
 
 const createSurvey = async (message, generalInfo, surveyType) => {
-  const survey = await Assessment.create(message);
-  console.log('survey', survey);
-  // Retrieve the full chat document with populated fields if needed
-  const chatHistory = await Assessment.findById(survey._id);
-  // Assuming you want to send the entire chat history, not just the first text message
-  //   const textMessages = chatHistory.messages
-  //     .filter((msg) => msg.text)
-  //     .map((msg) => msg.text);
+	const { data: survey, error } = await supabase.from("assessments").insert({ user_id: message.user }).select().single();
+	if (error) throw error;
 
-  try {
-    const body = {
-      user_id: survey.user,
-      chat_id: survey._id,
-      message: body.message,
-      history: [],
-      general_info: generalInfo,
-      survey_type: surveyType,
-    };
+	if (message.messages) {
+		const msgs = message.messages.map((m) => ({
+			assessment_id: survey.id,
+			text: m.text || null,
+			sender_id: m.sender || message.user,
+		}));
+		await supabase.from("assessment_messages").insert(msgs);
+	}
 
-    console.log('body axios', body);
-    const gptResponse = await axios.post(`${config.baseUrl}/survey-chat`, body);
-    return gptResponse.data;
-  } catch (error) {
-    console.error('Failed to send data to AI server:', error.message);
-    throw new Error('AI server error'); // Or handle the error in a way that suits your app
-  }
+	try {
+		const gptResponse = await axios.post(`${config.baseUrl}/survey-chat`, {
+			user_id: message.user,
+			chat_id: survey.id,
+			message: message.messages?.[0]?.text || "",
+			history: [],
+			general_info: generalInfo,
+			survey_type: surveyType,
+		});
+		return gptResponse.data;
+	} catch (err) {
+		console.error("Failed to send data to AI server:", err.message);
+		throw new Error("AI server error");
+	}
 };
 
-/**
- *
- * @param {*} id
- * @returns {Promise<About>}
- */
 const get = async (id) => {
-  const doc = await Assessment.findOne({ _id: id });
-  if (!doc) {
-    throw new ApiError(httpStatus.NOT_FOUND, 'Assessment not found');
-  }
-  return doc;
+	const { data: doc } = await supabase.from("assessments").select().eq("id", id).single();
+	if (!doc) {
+		throw new ApiError(httpStatus.NOT_FOUND, "Assessment not found");
+	}
+	const { data: msgs } = await supabase.from("assessment_messages").select().eq("assessment_id", id).order("created_at");
+	doc.messages = msgs || [];
+	return doc;
 };
 
 const updateAssessment = async (id, updateBody) => {
-  const { messages, user, generalInfo, bussinessInfo, assessmentName } =
-    updateBody;
-  const assessment = await Assessment.findByIdAndUpdate(
-    id,
-    { $push: { messages }, user }, // Push the new message to the array
-    { new: true } // Return the updated document
-  );
-  console.log('assessment', assessment);
+	const { messages, user, generalInfo, bussinessInfo, assessmentName } = updateBody;
 
-  const message = messages[0];
-  const chatHistory = await Assessment.findById(id);
-  const textMessages = chatHistory.messages
-    .filter((msg) => msg.text)
-    .map((msg) => msg.text);
+	// Insert user message
+	if (messages && messages.length > 0) {
+		const msgs = messages.map((m) => ({
+			assessment_id: id,
+			text: m.text || null,
+			sender_id: m.sender || user,
+		}));
+		await supabase.from("assessment_messages").insert(msgs);
+	}
 
-  textMessages.unshift('');
-  console.log('textMessages', textMessages);
-  try {
-    const body = {
-      user_id: assessment.user,
-      chat_id: assessment._id,
-      message: message.text,
-      history: textMessages,
-      general_info: generalInfo,
-      bussiness_info: bussinessInfo,
-      assessment_name: assessmentName,
-    };
+	await supabase.from("assessments").update({ user_id: user }).eq("id", id);
 
-    console.log('body axios', body);
-    const gptResponse = await axios.post(
-      `${config.baseUrl}/assesment-chat`,
-      body
-    );
+	const { data: allMsgs } = await supabase.from("assessment_messages").select("text").eq("assessment_id", id).order("created_at");
+	const textMessages = ["", ...(allMsgs || []).filter((m) => m.text).map((m) => m.text)];
 
-    console.log('gptResponse', gptResponse.data.message);
-    // Add GPT response as a new message
-    const gptMessage = {
-      text: gptResponse.data.message,
-      // sender: null, // Indicating that this is a GPT response
-      // timestamp: new Date(),
-      // generalInfo: null,
-      // surType: null,
-      // assessmentName: null,
-      // checkType: null,
-    };
+	try {
+		const gptResponse = await axios.post(`${config.baseUrl}/assesment-chat`, {
+			user_id: user,
+			chat_id: id,
+			message: messages[0].text,
+			history: textMessages,
+			general_info: generalInfo,
+			bussiness_info: bussinessInfo,
+			assessment_name: assessmentName,
+		});
 
-    const updatedAssessment = await Assessment.findByIdAndUpdate(
-      id,
-      { $push: { messages: gptMessage } },
-      { new: true }
-    );
-
-    return gptMessage;
-    return updatedAssessment;
-  } catch (error) {
-    console.error('Failed to send data to AI server:', error.message);
-    throw new Error('AI server error');
-  }
+		const gptMessage = { text: gptResponse.data.message };
+		await supabase.from("assessment_messages").insert({ assessment_id: id, text: gptMessage.text });
+		return gptMessage;
+	} catch (err) {
+		console.error("Failed to send data to AI server:", err.message);
+		throw new Error("AI server error");
+	}
 };
 
 const updateSurvey = async (id, message, userId) => {
-  const survey = await Assessment.findByIdAndUpdate(
-    id,
-    { $push: { messages: { ...message, sender: userId } }, user: userId },
-    { new: true }
-  );
-  console.log('survey', survey);
+	await supabase.from("assessment_messages").insert({
+		assessment_id: id,
+		text: message.text || null,
+		sender_id: userId,
+	});
+	await supabase.from("assessments").update({ user_id: userId }).eq("id", id);
 
-  const chatHistory = await Assessment.findById(id);
-  const textMessages = chatHistory.messages
-    .filter((msg) => msg.text)
-    .map((msg) => msg.text);
+	const { data: allMsgs } = await supabase.from("assessment_messages").select("text").eq("assessment_id", id).order("created_at");
+	const textMessages = (allMsgs || []).filter((m) => m.text).map((m) => m.text);
 
-  try {
-    const body = {
-      user_id: survey.user,
-      chat_id: survey._id,
-      message: message.text,
-      history: textMessages,
-      general_info: message.generalInfo,
-      survey_type: message.surType,
-    };
+	try {
+		const gptResponse = await axios.post(`${config.baseUrl}/assesment-chat`, {
+			user_id: userId,
+			chat_id: id,
+			message: message.text,
+			history: textMessages,
+			general_info: message.generalInfo,
+			survey_type: message.surType,
+		});
 
-    console.log('body axios', body);
-    const gptResponse = await axios.post(
-      `${config.baseUrl}/assesment-chat`,
-      body
-    );
+		await supabase.from("assessment_messages").insert({ assessment_id: id, text: gptResponse.data });
 
-    // Add GPT response as a new message
-    const gptMessage = {
-      text: gptResponse.data,
-      sender: null, // Indicating that this is a GPT response
-      timestamp: new Date(),
-      generalInfo: null,
-      surType: null,
-      assessmentName: null,
-      checkType: null,
-    };
-
-    const updatedSurvey = await Assessment.findByIdAndUpdate(
-      id,
-      { $push: { messages: gptMessage } },
-      { new: true }
-    );
-
-    return updatedSurvey;
-  } catch (error) {
-    console.error('Failed to send data to AI server:', error.message);
-    throw new Error('AI server error'); // Or handle the error in a way that suits your app
-  }
+		const full = await get(id);
+		return full;
+	} catch (err) {
+		console.error("Failed to send data to AI server:", err.message);
+		throw new Error("AI server error");
+	}
 };
 
 const updateCheckChat = async (id, message, userId) => {
-  const survey = await Assessment.findByIdAndUpdate(
-    id,
-    { $push: { messages: message }, user: userId }, // Push the new message to the array
-    { new: true } // Return the updated document
-  );
-  console.log('survey', survey);
-  const chatHistory = await Assessment.findById(id);
-  const textMessages = chatHistory.messages
-    .filter((msg) => msg.text)
-    .map((msg) => msg.text);
+	await supabase.from("assessment_messages").insert({
+		assessment_id: id,
+		text: message.text || null,
+		sender_id: userId,
+	});
+	await supabase.from("assessments").update({ user_id: userId }).eq("id", id);
 
-  try {
-    const body = {
-      user_id: survey.user,
-      chat_id: survey._id,
-      message: message.text,
-      history: textMessages,
-      general_info: message.generalInfo,
-      check_type: message.checkType,
-    };
+	const { data: allMsgs } = await supabase.from("assessment_messages").select("text").eq("assessment_id", id).order("created_at");
+	const textMessages = (allMsgs || []).filter((m) => m.text).map((m) => m.text);
 
-    console.log('body axios', body);
-    const gptResponse = await axios.post(
-      `${config.baseUrl}/assesment-chat`,
-      body
-    );
-    return gptResponse.data;
-  } catch (error) {
-    console.error('Failed to send data to AI server:', error.message);
-    throw new Error('AI server error'); // Or handle the error in a way that suits your app
-  }
+	try {
+		const gptResponse = await axios.post(`${config.baseUrl}/assesment-chat`, {
+			user_id: userId,
+			chat_id: id,
+			message: message.text,
+			history: textMessages,
+			general_info: message.generalInfo,
+			check_type: message.checkType,
+		});
+		return gptResponse.data;
+	} catch (err) {
+		console.error("Failed to send data to AI server:", err.message);
+		throw new Error("AI server error");
+	}
 };
 
 const createCheckChat = async (message, generalInfo, checkType) => {
-  const survey = await Assessment.create(message).populate('user');
-  console.log('survey', survey);
-  // Retrieve the full chat document with populated fields if needed
-  //   const chatHistory = await Assessment.findById(survey._id);
-  // Assuming you want to send the entire chat history, not just the first text message
-  //   const textMessages = chatHistory.messages
-  //     .filter((msg) => msg.text)
-  //     .map((msg) => msg.text);
+	const { data: survey, error } = await supabase.from("assessments").insert({ user_id: message.user }).select().single();
+	if (error) throw error;
 
-  try {
-    const body = {
-      user_id: survey.user._id,
-      chat_id: survey._id,
-      message: body.message,
-      history: [],
-      general_info: generalInfo,
-      check_type: checkType,
-      bussiness_info: user,
-    };
+	if (message.messages) {
+		const msgs = message.messages.map((m) => ({
+			assessment_id: survey.id,
+			text: m.text || null,
+			sender_id: m.sender || message.user,
+		}));
+		await supabase.from("assessment_messages").insert(msgs);
+	}
 
-    console.log('body axios', body);
-    const gptResponse = await axios.post(`${config.baseUrl}/check-chat`, body);
-    return gptResponse.data;
-  } catch (error) {
-    console.error('Failed to send data to AI server:', error.message);
-    throw new Error('AI server error'); // Or handle the error in a way that suits your app
-  }
+	try {
+		const gptResponse = await axios.post(`${config.baseUrl}/check-chat`, {
+			user_id: message.user,
+			chat_id: survey.id,
+			message: message.messages?.[0]?.text || "",
+			history: [],
+			general_info: generalInfo,
+			check_type: checkType,
+		});
+		return gptResponse.data;
+	} catch (err) {
+		console.error("Failed to send data to AI server:", err.message);
+		throw new Error("AI server error");
+	}
 };
 
-/**
- *
- * @param {*} id
- * @returns {Promise<About>}
- */
 const inspireMe = async (message) => {
-  try {
-    const gptResponse = await axios.post(`${config.baseUrl}/inspire`, message);
-    return gptResponse.data;
-  } catch (error) {
-    console.error('Failed to send data to AI server:', error.message);
-    throw new Error('AI server error'); // Or handle the error in a way that suits your app
-  }
+	try {
+		const gptResponse = await axios.post(`${config.baseUrl}/inspire`, message);
+		return gptResponse.data;
+	} catch (err) {
+		console.error("Failed to send data to AI server:", err.message);
+		throw new Error("AI server error");
+	}
 };
 
 module.exports = {
-  createAssessment,
-  createSurvey,
-  updateAssessment,
-  updateSurvey,
-  get,
-  createCheckChat,
-  updateCheckChat,
-  inspireMe,
+	createAssessment,
+	createSurvey,
+	updateAssessment,
+	updateSurvey,
+	get,
+	createCheckChat,
+	updateCheckChat,
+	inspireMe,
 };

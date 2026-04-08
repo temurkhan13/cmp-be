@@ -6,7 +6,7 @@ const pick = require("../../utils/pick");
 const { sendForgotPasswordEmail } = require("../../utils/sendGridHelper");
 const config = require("../../config/config");
 const { getURLParams } = require("../../common/global.functions");
-const User = require("./entity/model");
+const supabase = require("../../config/supabase");
 const { sendVerificationEmail } = require("../../utils/emailService");
 const ApiError = require("../../utils/ApiError");
 const workspaceService = require("../workSpaces/service");
@@ -91,7 +91,7 @@ const verifyEmail = catchAsync(async (req, res) => {
 
 const verifyGoogleCallback = catchAsync(async (req, res) => {
 	const { user } = req;
-	await User.findByIdAndUpdate(user._id, { "verificationCode.verify": true });
+	await supabase.from("users").update({ verification_code_verify: true }).eq("id", user._id);
 	await workspaceService.createDefaultWorkspace(user._id);
 	const tokens = await tokenService.generateAuthTokens(req.user);
 	const params = getURLParams({
