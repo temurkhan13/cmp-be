@@ -1,22 +1,19 @@
-const { handleStatus, isMarkdownDetected, makeAxiosCall, removeFileByPath, isFileExists } = require("../../common/global.functions.js");
-const schema = require("../../common/schema.js");
+const { handleStatus, isMarkdownDetected, makeAxiosCall } = require("../../common/global.functions.js");
 const config = require("../../config/config.js");
 const logger = require("../../config/logger.js");
 const supabase = require("../../config/supabase");
 const paginate = require("../../utils/paginate");
-const { generateAndConvertMarkdownToPDF, getUploadPath, generateSafePdfFilename } = require("./helper.js");
+const { generateAndConvertMarkdownToPDF, removeStorageFile, generateSafePdfFilename } = require("./helper.js");
 
 const createWorkspaceAssessment = async (body) => {
 	const { folderId, name } = body;
 
-	// Find workspace via folder
 	const { data: folder } = await supabase.from("folders").select("id, workspace_id, workspaces(user_id)").eq("id", folderId).single();
 	if (!folder) return handleStatus(false, "Workspace folder not found");
 
 	const userId = folder.workspaces?.user_id;
 	const workspaceId = folder.workspace_id;
 
-	// Create assessment
 	const { data: assessment, error } = await supabase.from("workspace_assessments").insert({
 		user_id: userId, workspace_id: workspaceId, folder_id: folderId, name, status: "pending",
 	}).select().single();
@@ -39,7 +36,7 @@ const createWorkspaceAssessment = async (body) => {
 		await supabase.from("assessment_reports").insert({
 			assessment_id: assessment.id, is_generated: true,
 			title: aiData.title || "Report Title", content: aiData.message,
-			url: pdf.fileName, generated_at: new Date(),
+			url: pdf.publicUrl, storage_path: pdf.storagePath, generated_at: new Date(),
 		});
 		await supabase.from("workspace_assessments").update({ status: "completed" }).eq("id", assessment.id);
 	} else {
@@ -88,12 +85,17 @@ const updateWorkspaceAssessmentById = async (id, body) => {
 const deleteWorkspaceAssessmentById = async (id) => {
 	const existing = await getWorkspaceAssessmentById(id);
 	if (!existing) return handleStatus(false, "Workspace assessment not found");
+
+	if (existing.report?.storage_path) {
+		await removeStorageFile(existing.report.storage_path);
+	}
+
 	await supabase.from("workspace_assessments").delete().eq("id", id);
 };
 
 const requestQuestionOrReportFromAI = async (data) => {
 	try {
-		const gptURL = `${config.baseUrl}/assesment-chat`;
+		const gptURL = config.baseUrl + "/assesment-chat";
 		const gptResponse = await makeAxiosCall({ url: gptURL, method: "POST", data });
 		return { status: true, data: gptResponse };
 	} catch (error) {
@@ -115,7 +117,6 @@ const updateAssessmentAnswer = async (workspaceAssessmentId, body) => {
 		answer, status: "answered", answered_at: new Date(),
 	}).eq("id", questionId);
 
-	// Get updated qa for AI history
 	const { data: qaHistory } = await supabase.from("assessment_qa").select().eq("assessment_id", workspaceAssessmentId).order("created_at");
 	const history = ["", ...(qaHistory || []).flatMap((q) => [q.question, q.answer])];
 
@@ -131,10 +132,15 @@ const updateAssessmentAnswer = async (workspaceAssessmentId, body) => {
 
 	if (isMarkdownDetected(aiData.message)) {
 		const pdf = await generateAndConvertMarkdownToPDF(aiData.message);
+
+		if (assessment.report?.storage_path) {
+			await removeStorageFile(assessment.report.storage_path);
+		}
+
 		await supabase.from("assessment_reports").upsert({
 			assessment_id: workspaceAssessmentId, is_generated: true,
 			title: aiData.title || "Report Title", content: aiData.message,
-			url: pdf.fileName, generated_at: new Date(),
+			url: pdf.publicUrl, storage_path: pdf.storagePath, generated_at: new Date(),
 		});
 		await supabase.from("workspace_assessments").update({ status: "completed" }).eq("id", workspaceAssessmentId);
 	} else {
@@ -158,12 +164,12 @@ const updateAssessmentReport = async (workspaceAssessmentId, body) => {
 	if (content) {
 		const pdf = await generateAndConvertMarkdownToPDF(content);
 		if (pdf) {
-			const oldUrl = assessment.report?.url;
-			update.url = pdf.fileName;
-			update.content = content;
-			if (oldUrl && oldUrl !== pdf.fileName) {
-				removeFileByPath(getUploadPath(oldUrl));
+			if (assessment.report?.storage_path) {
+				await removeStorageFile(assessment.report.storage_path);
 			}
+			update.url = pdf.publicUrl;
+			update.storage_path = pdf.storagePath;
+			update.content = content;
 		}
 	}
 
@@ -178,14 +184,10 @@ const downloadAssessmentReport = async (workspaceAssessmentId) => {
 	if (!assessment) return handleStatus(false, "Workspace assessment not found!");
 	if (!assessment.report?.url) return handleStatus(false, "Report not found!");
 
-	const reportPath = getUploadPath(assessment.report.url);
-	const exists = await isFileExists(reportPath);
-	if (!exists) return handleStatus(false, "Report file is missing");
-
 	const fileName = generateSafePdfFilename(assessment.report.title || "assessment-report");
 	if (!fileName) return handleStatus(false, "Error generating file name");
 
-	return { status: true, data: { fileName, filePath: reportPath } };
+	return { status: true, data: { fileName, downloadUrl: assessment.report.url } };
 };
 
 module.exports = {
