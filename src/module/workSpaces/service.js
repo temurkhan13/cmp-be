@@ -16,6 +16,38 @@ const {
 } = require("../../common/global.functions");
 const { assignPageAndLayoutIndexes, formatQuestionsToString } = require("./helper");
 
+// ─── Response Formatters (snake_case → camelCase) ────────────────
+
+const formatWorkspace = (ws) => {
+	if (!ws) return null;
+	return {
+		...ws,
+		_id: ws.id,
+		workspaceName: ws.workspace_name,
+		workspaceDescription: ws.workspace_description,
+		userId: ws.user_id,
+		isActive: ws.is_active,
+		isSoftDeleted: ws.is_soft_deleted,
+		createdAt: ws.created_at,
+		updatedAt: ws.updated_at,
+		folders: (ws.folders || []).map(formatFolder),
+	};
+};
+
+const formatFolder = (f) => {
+	if (!f) return null;
+	return {
+		...f,
+		_id: f.id,
+		folderName: f.folder_name,
+		workspaceId: f.workspace_id,
+		isActive: f.is_active,
+		isSoftDeleted: f.is_soft_deleted,
+		createdAt: f.created_at,
+		updatedAt: f.updated_at,
+	};
+};
+
 // ─── Workspace CRUD ──────────────────────────────────────────────
 
 const create = async (body) => {
@@ -30,7 +62,7 @@ const create = async (body) => {
 		.select()
 		.single();
 	if (error || !data) throw new ApiError(httpStatus.BAD_REQUEST, "something went wrong!");
-	return data;
+	return formatWorkspace(data);
 };
 
 const query = async (filter, options) => {
@@ -48,7 +80,7 @@ const get = async (id) => {
 		.eq("is_soft_deleted", false)
 		.single();
 	if (error || !data) throw new ApiError(httpStatus.BAD_REQUEST, "No workspace found!");
-	return data;
+	return formatWorkspace(data);
 };
 
 const update = async (id, updateBody) => {
@@ -65,7 +97,7 @@ const update = async (id, updateBody) => {
 		.select()
 		.single();
 	if (error || !data) throw new ApiError(httpStatus.BAD_REQUEST, "No workspace found!");
-	return data;
+	return formatWorkspace(data);
 };
 
 const deleteWorkspace = async (id) => {
@@ -97,7 +129,7 @@ const createFolder = async (workspaceId, folder) => {
 			.select()
 			.single();
 		if (error) throw new ApiError(httpStatus.BAD_REQUEST, error.message);
-		return data;
+		return formatFolder(data);
 	} catch (error) {
 		if (error instanceof ApiError) throw error;
 		throw new ApiError(httpStatus.BAD_REQUEST, `Error creating folder: ${error.message}`);
