@@ -99,12 +99,6 @@ const assistantChatUpdate = catchAsync(async (req, res) => {
 		}
 	}
 
-	// If chatId is 'newChat', create a new chat first
-	if (chatId === "newChat") {
-		const newChat = await service.assistantChat(workspaceId, folderId, body);
-		return res.status(httpStatus.CREATED).send({ ...newChat, success: true });
-	}
-
 	const doc = await service.assistantChatUpdate(workspaceId, folderId, chatId, body);
 	res.status(httpStatus.CREATED).send(doc);
 });
