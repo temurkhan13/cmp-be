@@ -255,14 +255,39 @@ const getAssistantChat = async (workspaceId, folderId, chatId) => {
 		if (!chat) throw new ApiError(httpStatus.BAD_REQUEST, "Chat not found!");
 		if (chat.is_soft_deleted) throw new ApiError(httpStatus.NOT_FOUND, "Chat is soft-deleted and not available.");
 
-		// Fetch messages
+		// Fetch messages with reactions
 		const { data: messages } = await supabase
 			.from("folder_chat_messages")
+			.select("*, reactions:chat_message_reactions(*)")
+			.eq("chat_id", chatId)
+			.order("created_at", { ascending: true });
+
+		// Fetch comments for this chat
+		const { data: comments } = await supabase
+			.from("folder_chat_comments")
 			.select("*")
 			.eq("chat_id", chatId)
 			.order("created_at", { ascending: true });
 
-		chat.generalMessages = (messages || []).map(m => ({ ...m, _id: m.id }));
+		// Fetch bookmarks for this chat
+		const { data: bookmarks } = await supabase
+			.from("folder_chat_bookmarks")
+			.select("*")
+			.eq("chat_id", chatId);
+
+		// Attach comments to their messages
+		const commentsByMessage = {};
+		(comments || []).forEach(c => {
+			if (!commentsByMessage[c.message_id]) commentsByMessage[c.message_id] = [];
+			commentsByMessage[c.message_id].push({ ...c, _id: c.id });
+		});
+
+		chat.generalMessages = (messages || []).map(m => ({
+			...m,
+			_id: m.id,
+			comments: commentsByMessage[m.id] || [],
+		}));
+		chat.bookmarks = (bookmarks || []).map(b => ({ ...b, _id: b.id }));
 		return chat;
 	} catch (error) {
 		if (error instanceof ApiError) throw error;
