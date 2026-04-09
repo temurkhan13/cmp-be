@@ -84,15 +84,15 @@ const verifyEmail = catchAsync(async (req, res) => {
 	const { user } = req;
 	const { verificationCode } = req.body;
 	console.log("user,", user, verificationCode);
-	const verified = await userService.verifyEmail(user._id, parseInt(verificationCode));
+	const verified = await userService.verifyEmail(user.id, parseInt(verificationCode));
 
 	res.send({ success: true });
 });
 
 const verifyGoogleCallback = catchAsync(async (req, res) => {
 	const { user } = req;
-	await supabase.from("users").update({ verification_code_verify: true }).eq("id", user._id);
-	await workspaceService.createDefaultWorkspace(user._id);
+	await supabase.from("users").update({ verification_code_verify: true }).eq("id", user.id);
+	await workspaceService.createDefaultWorkspace(user.id);
 	const tokens = await tokenService.generateAuthTokens(req.user);
 	const params = getURLParams({
 		accessToken: tokens.access.token,

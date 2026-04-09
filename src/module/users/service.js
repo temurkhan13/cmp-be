@@ -16,7 +16,7 @@ const generateVerificationCode = async () => {
 
 const register = async (body) => {
 	// Check if email taken
-	const { data: existing } = await supabase.from("users").select("id").eq("email", body.email).single();
+	const { data: existing } = await supabase.from("users").select("id").eq("email", body.email).maybeSingle();
 	if (existing) {
 		throw new ApiError(httpStatus.BAD_REQUEST, "User already exists");
 	}
@@ -33,9 +33,13 @@ const register = async (body) => {
 		verification_code_key: parseInt(verificationCode),
 		verification_code_verify: false,
 	}).select().single();
-	if (error) throw error;
+	if (error) throw new ApiError(httpStatus.BAD_REQUEST, error.message);
 
-	await sendVerificationEmail(user.email, verificationCode);
+	try {
+		await sendVerificationEmail(user.email, verificationCode);
+	} catch (e) {
+		console.warn("Email send failed (non-blocking):", e.message);
+	}
 	return user;
 };
 
