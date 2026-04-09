@@ -460,10 +460,13 @@ const assistantChatUpdate = async (workspaceId, folderId, chatId, messageData) =
 			.single();
 
 		if (chatId === "newChat") {
-			// Create new chat
+			// Create new chat — use first message as title
+			const chatTitle = messageData.text
+				? messageData.text.substring(0, 60).replace(/\n/g, " ") + (messageData.text.length > 60 ? "..." : "")
+				: "New Chat";
 			const { data: newChat, error: chatErr } = await supabase
 				.from("folder_chats")
-				.insert({ folder_id: folderId, chat_title: "New Chat" })
+				.insert({ folder_id: folderId, chat_title: chatTitle })
 				.select()
 				.single();
 			if (chatErr) throw new ApiError(httpStatus.BAD_REQUEST, chatErr.message);
