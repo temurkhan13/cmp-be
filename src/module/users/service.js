@@ -62,6 +62,12 @@ const register = async (body) => {
 	} catch (e) {
 		console.warn("Email send failed (non-blocking):", e.message);
 	}
+	// Create default workspace on registration (don't wait for email verification)
+	try {
+		await workspaceService.createDefaultWorkspace(user.id);
+	} catch (e) {
+		console.warn("Default workspace creation failed (non-blocking):", e.message);
+	}
 	return formatUser(user);
 };
 
