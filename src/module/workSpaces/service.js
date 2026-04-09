@@ -262,7 +262,7 @@ const getAssistantChat = async (workspaceId, folderId, chatId) => {
 			.eq("chat_id", chatId)
 			.order("created_at", { ascending: true });
 
-		chat.generalMessages = messages || [];
+		chat.generalMessages = (messages || []).map(m => ({ ...m, _id: m.id }));
 		return chat;
 	} catch (error) {
 		if (error instanceof ApiError) throw error;
@@ -278,6 +278,27 @@ const generateInviteLink = (workspaceId, folderId, chatId, email) => {
 	);
 	const inviteLink = `${config.frontendUrl}/invite?token=${inviteToken}`;
 	return inviteLink;
+};
+
+const updateMessageText = async (workspaceId, folderId, chatId, messageId, body) => {
+	// Verify chat belongs to folder/workspace
+	const { data: chat } = await supabase
+		.from("folder_chats")
+		.select("id")
+		.eq("id", chatId)
+		.eq("folder_id", folderId)
+		.single();
+	if (!chat) throw new ApiError(httpStatus.BAD_REQUEST, "Chat not found!");
+
+	const { data, error } = await supabase
+		.from("folder_chat_messages")
+		.update({ text: body.text })
+		.eq("id", messageId)
+		.eq("chat_id", chatId)
+		.select()
+		.single();
+	if (error) throw new ApiError(httpStatus.BAD_REQUEST, error.message);
+	return { ...data, _id: data.id };
 };
 
 const shareChat = async (workspaceId, folderId, chatId, userIdToShare) => {
@@ -2514,6 +2535,7 @@ module.exports = {
 	shareChat,
 	acceptChatInvite,
 	assistantChatUpdate,
+	updateMessageText,
 	deleteAssistantChat,
 	getChatMedia,
 	getChatLinks,
