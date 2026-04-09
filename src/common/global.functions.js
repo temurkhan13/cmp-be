@@ -63,8 +63,10 @@ const deepMerge = (target, source) => {
 };
 const isMarkdownDetected = (text) => {
 	if (!text) return false;
-	const markdownPattern = /(```|#\s|-\s|\*\*|_\s|>\s)/;
-	return markdownPattern.test(text);
+	// A real report has multiple markdown headings and substantial length
+	// Simple questions with a heading should NOT be treated as reports
+	const headingCount = (text.match(/^#{1,3}\s/gm) || []).length;
+	return headingCount >= 3 && text.length > 1500;
 };
 const isValidUrl = (url) => {
 	const urlPattern = /^(http|https):\/\/[^ "]+$/;
