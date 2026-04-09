@@ -180,7 +180,7 @@ const updateFolder = async (workspaceId, folderId, updateBody) => {
 			.select()
 			.single();
 		if (error) throw new ApiError(httpStatus.BAD_REQUEST, error.message);
-		return data;
+		return formatFolder(data);
 	} catch (error) {
 		if (error instanceof ApiError) throw error;
 		throw new ApiError(httpStatus.BAD_REQUEST, `Error updating folder: ${error.message}`);
