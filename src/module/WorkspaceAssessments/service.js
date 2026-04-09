@@ -64,8 +64,23 @@ const getWorkspaceAssessmentById = async (id) => {
 
 	const { data: report } = await supabase.from("assessment_reports").select().eq("assessment_id", id).single();
 	const { data: qa } = await supabase.from("assessment_qa").select().eq("assessment_id", id).order("created_at");
-	data.report = report || null;
-	data.qa = qa || [];
+	if (report) {
+		data.report = {
+			...report, _id: report.id,
+			isGenerated: report.is_generated,
+			assessmentId: report.assessment_id,
+			storagePath: report.storage_path,
+			generatedAt: report.generated_at,
+			ReportTitle: report.title,
+		};
+	} else {
+		data.report = null;
+	}
+	data.qa = (qa || []).map(q => ({ ...q, _id: q.id, assessmentId: q.assessment_id, askedAt: q.asked_at, answeredAt: q.answered_at }));
+	data._id = data.id;
+	data.folderId = data.folder_id;
+	data.userId = data.user_id;
+	data.workspaceId = data.workspace_id;
 	return data;
 };
 
