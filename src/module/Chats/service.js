@@ -145,11 +145,12 @@ const updateChangeTone = async (chatId, messageId, body) => {
 // AI proxy functions — no DB changes
 // Frontend sends {message} (string or {selectedText}) but AI service expects {text}
 const toAiBody = (body) => {
-	let text = body.text || "";
-	if (!text && body.message) {
-		text = typeof body.message === "string" ? body.message : body.message.selectedText || "";
+	const { message, ...rest } = body;
+	let text = rest.text || "";
+	if (!text && message) {
+		text = typeof message === "string" ? message : message.selectedText || "";
 	}
-	return { ...body, text };
+	return { ...rest, text, message: text };
 };
 const changeTone = async (body) => { return (await axios.post(`${config.baseUrl}/change-tone`, toAiBody(body))).data; };
 const translate = async (body) => { return (await axios.post(`${config.baseUrl}/translate`, toAiBody(body))).data; };
