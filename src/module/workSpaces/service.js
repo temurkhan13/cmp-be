@@ -1731,12 +1731,34 @@ const getUserChats = async (userId, query) => {
 		.in("folder_id", folderIds)
 		.order("created_at", { ascending: false });
 
+	// Auto-fix titles for chats still named "New Chat"
+	const newChatIds = (chats || []).filter(c => c.chat_title === "New Chat").map(c => c.id);
+	const firstMessages = {};
+	if (newChatIds.length > 0) {
+		for (const chatId of newChatIds) {
+			const { data: msg } = await supabase
+				.from("folder_chat_messages")
+				.select("text")
+				.eq("chat_id", chatId)
+				.eq("from", "user")
+				.order("created_at", { ascending: true })
+				.limit(1)
+				.maybeSingle();
+			if (msg?.text) {
+				const title = msg.text.substring(0, 60).replace(/\n/g, " ") + (msg.text.length > 60 ? "..." : "");
+				firstMessages[chatId] = title;
+				// Update in DB so this only happens once
+				await supabase.from("folder_chats").update({ chat_title: title }).eq("id", chatId);
+			}
+		}
+	}
+
 	return (chats || []).map((chat) => ({
 		...chat,
 		_id: chat.id,
 		workspaceId: folderMap[chat.folder_id]?.workspace_id,
 		folderId: chat.folder_id,
-		chatTitle: chat.chat_title,
+		chatTitle: firstMessages[chat.id] || chat.chat_title,
 		chatId: chat.id,
 		isSoftDeleted: chat.is_soft_deleted,
 		createdAt: chat.created_at,
