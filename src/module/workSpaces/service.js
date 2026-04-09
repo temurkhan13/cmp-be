@@ -1729,9 +1729,15 @@ const getUserChats = async (userId, query) => {
 		.order("created_at", { ascending: false });
 
 	return (chats || []).map((chat) => ({
+		...chat,
+		_id: chat.id,
 		workspaceId: folderMap[chat.folder_id]?.workspace_id,
 		folderId: chat.folder_id,
-		...chat,
+		chatTitle: chat.chat_title,
+		chatId: chat.id,
+		isSoftDeleted: chat.is_soft_deleted,
+		createdAt: chat.created_at,
+		updatedAt: chat.updated_at,
 	}));
 };
 
