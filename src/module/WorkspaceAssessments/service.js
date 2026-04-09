@@ -3,7 +3,24 @@ const config = require("../../config/config.js");
 const logger = require("../../config/logger.js");
 const supabase = require("../../config/supabase");
 const paginate = require("../../utils/paginate");
+const axios = require("axios");
 const { generateAndConvertMarkdownToPDF, removeStorageFile, generateSafePdfFilename } = require("./helper.js");
+
+// RAG ingest helper — best-effort, never blocks the main flow
+const ingestToRAG = async (userId, folderId, filename, content) => {
+	try {
+		await axios.post(`${config.baseUrl}/ingest`, {
+			user_id: String(userId),
+			workspace_id: "",
+			folder_id: String(folderId),
+			filename,
+			content,
+		});
+		logger.info(`RAG ingested: ${filename}`);
+	} catch (e) {
+		logger.info(`RAG ingest skipped: ${e.message}`);
+	}
+};
 
 const createWorkspaceAssessment = async (body) => {
 	const { folderId, name } = body;
@@ -53,6 +70,8 @@ const createWorkspaceAssessment = async (body) => {
 			url: pdf.publicUrl, storage_path: pdf.storagePath, generated_at: new Date(),
 		});
 		await supabase.from("workspace_assessments").update({ status: "completed" }).eq("id", assessment.id);
+		// RAG: ingest report
+		ingestToRAG(userId, folderId, `assessment-report-${assessment.id}`, `Assessment Report: ${name}\n\n${aiData.message}`);
 	} else {
 		await supabase.from("assessment_qa").insert({
 			assessment_id: assessment.id, question: aiData.message, status: "pending", asked_at: new Date(),
@@ -146,6 +165,13 @@ const updateAssessmentAnswer = async (workspaceAssessmentId, body) => {
 		answer, status: "answered", answered_at: new Date(),
 	}).eq("id", questionId);
 
+	// RAG: ingest the Q&A pair
+	ingestToRAG(
+		assessment.user_id, assessment.folder_id,
+		`assessment-qa-${workspaceAssessmentId}-${questionId}`,
+		`Assessment: ${assessment.name}\nQ: ${question.question}\nA: ${answer}`
+	);
+
 	const { data: qaHistory } = await supabase.from("assessment_qa").select().eq("assessment_id", workspaceAssessmentId).order("created_at");
 	const history = ["", ...(qaHistory || []).flatMap((q) => [q.question, q.answer])];
 
@@ -178,6 +204,13 @@ const updateAssessmentAnswer = async (workspaceAssessmentId, body) => {
 			url: pdf.publicUrl, storage_path: pdf.storagePath, generated_at: new Date(),
 		});
 		await supabase.from("workspace_assessments").update({ status: "completed" }).eq("id", workspaceAssessmentId);
+
+		// RAG: ingest the full report
+		ingestToRAG(
+			assessment.user_id, assessment.folder_id,
+			`assessment-report-${workspaceAssessmentId}`,
+			`Assessment Report: ${assessment.name}\n\n${aiData.message}`
+		);
 	} else {
 		await supabase.from("assessment_qa").insert({
 			assessment_id: workspaceAssessmentId, question: aiData.message, status: "pending", asked_at: new Date(),
