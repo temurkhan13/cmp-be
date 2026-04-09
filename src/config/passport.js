@@ -22,6 +22,12 @@ const jwtVerify = async (payload, done) => {
 		if (error || !user) {
 			return done(null, false);
 		}
+		// Map snake_case to camelCase for frontend compatibility
+		user._id = user.id;
+		user.firstName = user.first_name;
+		user.lastName = user.last_name;
+		user.companyName = user.company_name;
+		user.photoPath = user.photo_path;
 		return done(null, user);
 	} catch (error) {
 		done(error, false);

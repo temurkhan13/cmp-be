@@ -6,6 +6,28 @@ const supabase = require("../../config/supabase");
 const paginate = require("../../utils/paginate");
 const workspaceService = require("../workSpaces/service.js");
 
+const formatUser = (user) => {
+	if (!user) return null;
+	const { password, ...rest } = user;
+	return {
+		...rest,
+		_id: user.id,
+		firstName: user.first_name,
+		lastName: user.last_name,
+		companyName: user.company_name,
+		photoPath: user.photo_path,
+		googleId: user.google_id,
+		verificationCode: {
+			key: user.verification_code_key,
+			verify: user.verification_code_verify,
+			validTill: user.verification_code_valid_till,
+		},
+		OTP: { key: user.otp_key, validTill: user.otp_valid_till },
+		createdAt: user.created_at,
+		updatedAt: user.updated_at,
+	};
+};
+
 const generateVerificationCode = async () => {
 	let code = Math.floor(Math.random() * 1000000).toString();
 	while (code.length < 6) {
@@ -40,7 +62,7 @@ const register = async (body) => {
 	} catch (e) {
 		console.warn("Email send failed (non-blocking):", e.message);
 	}
-	return user;
+	return formatUser(user);
 };
 
 const verifyEmail = async (id, verificationCode) => {
@@ -62,27 +84,27 @@ const verifyEmail = async (id, verificationCode) => {
 	return true;
 };
 
-const loginUserWithEmailAndPassword = async (email, password) => {
-	const user = await getUser({ email });
-	if (!user || !(await bcrypt.compare(password, user.password))) {
+const loginUserWithEmailAndPassword = async (email, pwd) => {
+	const user = await getUser({ email }, true);
+	if (!user || !(await bcrypt.compare(pwd, user.password))) {
 		throw new ApiError(httpStatus.UNAUTHORIZED, "Incorrect email or password");
 	}
-	return user;
+	return formatUser(user);
 };
 
-const getUser = async (filter) => {
+const getUser = async (filter, raw = false) => {
 	let query = supabase.from("users").select();
 	if (filter.email) query = query.eq("email", filter.email);
 	if (filter._id || filter.id) query = query.eq("id", filter._id || filter.id);
 	const { data, error } = await query.single();
 	if (error) return null;
-	return data;
+	return raw ? data : formatUser(data);
 };
 
 const getUserById = async (id) => {
 	const { data, error } = await supabase.from("users").select().eq("id", id).single();
 	if (error) return null;
-	return data;
+	return formatUser(data);
 };
 
 const forgotPassword = async (email) => {
