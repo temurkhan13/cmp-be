@@ -279,15 +279,21 @@ const getAssistantChat = async (workspaceId, folderId, chatId) => {
 		const commentsByMessage = {};
 		(comments || []).forEach(c => {
 			if (!commentsByMessage[c.message_id]) commentsByMessage[c.message_id] = [];
-			commentsByMessage[c.message_id].push({ ...c, _id: c.id });
+			commentsByMessage[c.message_id].push({ ...c, _id: c.id, messageId: c.message_id, userId: c.user_id, userName: c.user_name });
 		});
+
+		// Map reactions to camelCase (frontend expects react.user, react.type)
+		const mapReactions = (reactions) => (reactions || []).map(r => ({
+			...r, _id: r.id, user: r.user_id, messageId: r.message_id,
+		}));
 
 		chat.generalMessages = (messages || []).map(m => ({
 			...m,
 			_id: m.id,
+			reactions: mapReactions(m.reactions),
 			comments: commentsByMessage[m.id] || [],
 		}));
-		chat.bookmarks = (bookmarks || []).map(b => ({ ...b, _id: b.id }));
+		chat.bookmarks = (bookmarks || []).map(b => ({ ...b, _id: b.id, messageId: b.message_id, userId: b.user_id }));
 		return chat;
 	} catch (error) {
 		if (error instanceof ApiError) throw error;
