@@ -1,6 +1,6 @@
 const objectId = (value, helpers) => {
-	if (!value.match(/^[0-9a-fA-F]{24}$/)) {
-		return helpers.message('"{{#label}}" must be a valid mongo id');
+	if (!value.match(/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/)) {
+		return helpers.message('"{{#label}}" must be a valid id');
 	}
 	return value;
 };
