@@ -86,7 +86,11 @@ const verifyEmail = async (id, verificationCode) => {
 	}).eq("id", id);
 	if (error) throw error;
 
-	await workspaceService.createDefaultWorkspace(id);
+	// Only create workspace if user doesn't have one yet
+	const { data: existingWs } = await supabase.from("workspaces").select("id").eq("user_id", id).limit(1);
+	if (!existingWs || existingWs.length === 0) {
+		await workspaceService.createDefaultWorkspace(id);
+	}
 	return true;
 };
 
