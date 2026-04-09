@@ -129,6 +129,18 @@ const createFolder = async (workspaceId, folder) => {
 			.select()
 			.single();
 		if (error) throw new ApiError(httpStatus.BAD_REQUEST, error.message);
+
+		// Save business info if provided
+		if (folder.businessInfo) {
+			await supabase.from("folder_business_info").insert({
+				folder_id: data.id,
+				company_name: folder.businessInfo.companyName || "",
+				company_size: parseInt(folder.businessInfo.companySize) || null,
+				job_title: folder.businessInfo.jobTitle || "",
+				industry: folder.businessInfo.industry || "",
+			});
+		}
+
 		return formatFolder(data);
 	} catch (error) {
 		if (error instanceof ApiError) throw error;
