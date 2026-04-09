@@ -102,6 +102,11 @@ const assistantChatUpdate = catchAsync(async (req, res) => {
 	const doc = await service.assistantChatUpdate(workspaceId, folderId, chatId, body);
 	res.status(httpStatus.CREATED).send(doc);
 });
+const updateMessageText = catchAsync(async (req, res) => {
+	const { workspaceId, folderId, chatId, messageId } = req.params;
+	const doc = await service.updateMessageText(workspaceId, folderId, chatId, messageId, req.body);
+	res.status(httpStatus.OK).send(doc);
+});
 const deleteAssistantChat = catchAsync(async (req, res) => {
 	const { workspaceId, folderId, chatId } = req.params;
 	const assessment = await service.deleteAssistantChat(workspaceId, folderId, chatId);
@@ -512,6 +517,7 @@ module.exports = {
 	shareChat,
 	acceptChatInvite,
 	assistantChatUpdate,
+	updateMessageText,
 	deleteAssistantChat,
 	UpdateGeneralMessage,
 	getChatMedia,

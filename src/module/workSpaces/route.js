@@ -41,6 +41,12 @@ router.patch(
 	controller.assistantChatUpdate,
 );
 
+router.put(
+	"/:workspaceId/folder/:folderId/chat/:chatId/message/:messageId",
+	auth(),
+	controller.updateMessageText,
+);
+
 router.get("/:workspaceId/folder/:folderId/chat/:chatId/media", auth(), controller.getChatMedia);
 router.get("/:workspaceId/folder/:folderId/chat/:chatId/links", auth(), controller.getChatLinks);
 router.get("/:workspaceId/folder/:folderId/chat/:chatId/documents", auth(), controller.getChatDocuments);
