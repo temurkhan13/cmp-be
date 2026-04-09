@@ -85,9 +85,10 @@ const acceptChatInvite = catchAsync(async (req, res) => {
 	res.status(httpStatus.OK).send(chat);
 });
 const assistantChatUpdate = catchAsync(async (req, res) => {
-	const { workspaceId, folderId, chatId } = req.params;
+	const { workspaceId, folderId } = req.params;
+	let { chatId } = req.params;
 	const { user, body } = req;
-	body.sender = user._id;
+	body.sender = user._id || user.id;
 	if (req.file) {
 		const fileType = req.file.mimetype.split("/")[0];
 		body.pdfPath = req.file.filename;
@@ -97,9 +98,14 @@ const assistantChatUpdate = catchAsync(async (req, res) => {
 			body.documents = [{ fileName: req.file.originalname, name: req.file.filename, date: new Date(), size: req.file.size }];
 		}
 	}
-	const doc = await service.assistantChatUpdate(workspaceId, folderId, chatId, body);
-	console.log("doc", doc);
 
+	// If chatId is 'newChat', create a new chat first
+	if (chatId === "newChat") {
+		const newChat = await service.assistantChat(workspaceId, folderId, body);
+		return res.status(httpStatus.CREATED).send({ ...newChat, success: true });
+	}
+
+	const doc = await service.assistantChatUpdate(workspaceId, folderId, chatId, body);
 	res.status(httpStatus.CREATED).send(doc);
 });
 const deleteAssistantChat = catchAsync(async (req, res) => {
