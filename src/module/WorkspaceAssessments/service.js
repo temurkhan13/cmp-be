@@ -14,14 +14,28 @@ const createWorkspaceAssessment = async (body) => {
 	const userId = folder.workspaces?.user_id;
 	const workspaceId = folder.workspace_id;
 
+	// Check for duplicate assessment (same folder + name)
+	const { data: existing } = await supabase.from("workspace_assessments")
+		.select("id").eq("folder_id", folderId).eq("name", name).maybeSingle();
+	if (existing) {
+		const full = await getWorkspaceAssessmentById(existing.id);
+		return { status: true, data: full, message: "Assessment already exists" };
+	}
+
 	const { data: assessment, error } = await supabase.from("workspace_assessments").insert({
 		user_id: userId, workspace_id: workspaceId, folder_id: folderId, name, status: "pending",
 	}).select().single();
 	if (error) throw error;
 
+	// Fetch business info from folder for AI context
+	const { data: bizInfo } = await supabase.from("folder_business_info").select("*").eq("folder_id", folderId).maybeSingle();
+	const businessInfoStr = bizInfo
+		? `Company: ${bizInfo.company_name || ""}, Size: ${bizInfo.company_size || ""}, Industry: ${bizInfo.industry || ""}, Role: ${bizInfo.job_title || ""}`
+		: "";
+
 	const aiPayload = {
 		userId, chat_id: folderId, message: body.message || "",
-		general_info: body.generalInfo || "", business_info: body.business_info || "", assessment_name: name,
+		general_info: body.generalInfo || "", business_info: businessInfoStr || body.business_info || "", assessment_name: name,
 	};
 	const aiResponse = await requestQuestionOrReportFromAI(aiPayload);
 	if (!aiResponse.status) return handleStatus(false, aiResponse.message);
@@ -135,9 +149,15 @@ const updateAssessmentAnswer = async (workspaceAssessmentId, body) => {
 	const { data: qaHistory } = await supabase.from("assessment_qa").select().eq("assessment_id", workspaceAssessmentId).order("created_at");
 	const history = ["", ...(qaHistory || []).flatMap((q) => [q.question, q.answer])];
 
+	// Fetch business info for AI context
+	const { data: bizInfo } = await supabase.from("folder_business_info").select("*").eq("folder_id", assessment.folder_id).maybeSingle();
+	const businessInfoStr = bizInfo
+		? `Company: ${bizInfo.company_name || ""}, Size: ${bizInfo.company_size || ""}, Industry: ${bizInfo.industry || ""}, Role: ${bizInfo.job_title || ""}`
+		: "";
+
 	const aiPayload = {
 		userId: assessment.user_id, chat_id: assessment.folder_id, message: answer || "",
-		history, general_info: "", business_info: "", assessment_name: assessment.name,
+		history, general_info: "", business_info: businessInfoStr, assessment_name: assessment.name,
 	};
 	const aiResponse = await requestQuestionOrReportFromAI(aiPayload);
 	if (!aiResponse.status) return handleStatus(false, aiResponse.message);
