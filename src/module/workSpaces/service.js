@@ -450,10 +450,10 @@ const assistantChatUpdate = async (workspaceId, folderId, chatId, messageData) =
 			}
 
 			const body = {
-				user_id: messageData.sender,
-				chat_id: newChat.id,
-				message: messageData.text,
-				history: "",
+				user_id: String(messageData.sender || ""),
+				chat_id: String(newChat.id),
+				message: messageData.text || "",
+				history: [],
 			};
 
 			const chatFromAI = await getChatFromAI(body);
