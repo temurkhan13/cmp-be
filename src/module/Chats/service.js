@@ -143,17 +143,19 @@ const updateChangeTone = async (chatId, messageId, body) => {
 };
 
 // AI proxy functions — no DB changes
-const changeTone = async (body) => { return (await axios.post(`${config.baseUrl}/change-tone`, body)).data; };
-const translate = async (body) => { return (await axios.post(`${config.baseUrl}/translate`, body)).data; };
-const improveWriting = async (body) => { return (await axios.post(`${config.baseUrl}/improve-writing`, body)).data; };
-const fixGrammar = async (body) => { return (await axios.post(`${config.baseUrl}/fix-grammar`, body)).data; };
-const shorterText = async (body) => { return (await axios.post(`${config.baseUrl}/make-shorter`, body)).data; };
-const longerText = async (body) => { return (await axios.post(`${config.baseUrl}/make-longer`, body)).data; };
-const languageSimplify = async (body) => { return (await axios.post(`${config.baseUrl}/simplify-language`, body)).data; };
-const summarize = async (body) => { return (await axios.post(`${config.baseUrl}/summarize`, body)).data; };
-const explain = async (body) => { return (await axios.post(`${config.baseUrl}/explain-this`, body)).data; };
-const comprehensiveText = async (body) => { return (await axios.post(`${config.baseUrl}/comprehensive-text`, body)).data; };
-const autoText = async (body) => { return (await axios.post(`${config.baseUrl}/auto-text`, body)).data; };
+// Frontend sends {message} but AI service expects {text}, so map it
+const toAiBody = (body) => ({ ...body, text: body.text || body.message || "" });
+const changeTone = async (body) => { return (await axios.post(`${config.baseUrl}/change-tone`, toAiBody(body))).data; };
+const translate = async (body) => { return (await axios.post(`${config.baseUrl}/translate`, toAiBody(body))).data; };
+const improveWriting = async (body) => { return (await axios.post(`${config.baseUrl}/improve-writing`, toAiBody(body))).data; };
+const fixGrammar = async (body) => { return (await axios.post(`${config.baseUrl}/fix-grammar`, toAiBody(body))).data; };
+const shorterText = async (body) => { return (await axios.post(`${config.baseUrl}/make-shorter`, toAiBody(body))).data; };
+const longerText = async (body) => { return (await axios.post(`${config.baseUrl}/make-longer`, toAiBody(body))).data; };
+const languageSimplify = async (body) => { return (await axios.post(`${config.baseUrl}/simplify-language`, toAiBody(body))).data; };
+const summarize = async (body) => { return (await axios.post(`${config.baseUrl}/summarize`, toAiBody(body))).data; };
+const explain = async (body) => { return (await axios.post(`${config.baseUrl}/explain-this`, toAiBody(body))).data; };
+const comprehensiveText = async (body) => { return (await axios.post(`${config.baseUrl}/comprehensive-text`, toAiBody(body))).data; };
+const autoText = async (body) => { return (await axios.post(`${config.baseUrl}/auto-text`, toAiBody(body))).data; };
 const inspireMe = async (body) => {
 	const payload = {
 		message: body.message,
