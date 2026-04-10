@@ -1798,6 +1798,9 @@ const getUserSitemaps = async (userId, query) => {
 		workspaceId: folderMap[r.folder_id]?.workspace_id,
 		folderId: r.folder_id,
 		...r.sitemap,
+		_id: r.sitemap?.id,
+		updatedAt: r.sitemap?.updated_at,
+		createdAt: r.sitemap?.created_at,
 	}));
 };
 
