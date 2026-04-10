@@ -91,7 +91,8 @@ const getFullPlaybook = async (playbookId) => {
 		.eq("playbook_id", playbookId)
 		.order("created_at", { ascending: true });
 
-	playbook.stages = stages || [];
+	playbook._id = playbook.id;
+	playbook.stages = (stages || []).map(s => ({ ...s, _id: s.id }));
 
 	for (const stage of playbook.stages) {
 		const { data: nodes } = await supabase
@@ -99,14 +100,14 @@ const getFullPlaybook = async (playbookId) => {
 			.select("*")
 			.eq("stage_id", stage.id)
 			.order("created_at", { ascending: true });
-		stage.nodes = nodes || [];
+		stage.nodes = (nodes || []).map(n => ({ ...n, _id: n.id }));
 
 		const { data: stageNodeData } = await supabase
 			.from("playbook_stage_node_data")
 			.select("*")
 			.eq("stage_id", stage.id)
 			.order("created_at", { ascending: true });
-		stage.nodeData = stageNodeData || [];
+		stage.nodeData = (stageNodeData || []).map(nd => ({ ...nd, _id: nd.id }));
 
 		for (const node of stage.nodes) {
 			const { data: nodeNodeData } = await supabase
@@ -114,7 +115,7 @@ const getFullPlaybook = async (playbookId) => {
 				.select("*")
 				.eq("node_id", node.id)
 				.order("created_at", { ascending: true });
-			node.nodeData = nodeNodeData || [];
+			node.nodeData = (nodeNodeData || []).map(nd => ({ ...nd, _id: nd.id }));
 		}
 
 		// Load comments for all nodeData entries (both stage-level and node-level)
