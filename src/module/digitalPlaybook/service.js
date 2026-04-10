@@ -989,6 +989,22 @@ const updateType = async (playbookId, stageId, type, typeId, updateBody) => {
 	return await getFullPlaybook(playbookId);
 };
 
+const inspire = async (inspireBody) => {
+	try {
+		const initialBody = {
+			user_id: inspireBody.userId,
+			heading: inspireBody.heading,
+			playbook_name: inspireBody.playbookName,
+		};
+
+		const response = await axios.post(`${config.baseUrl}/playbook-inspire`, initialBody);
+		return response.data;
+	} catch (error) {
+		console.error("Inspire error:", error.message, error.response?.data || "");
+		throw new ApiError(httpStatus.BAD_REQUEST, `Inspire error: ${error.message}`);
+	}
+};
+
 module.exports = {
 	create,
 	querySitemaps,
@@ -997,6 +1013,7 @@ module.exports = {
 	updateSitemap,
 	updateSitemapFields,
 	wireFrame,
+	inspire,
 	createComment,
 	updateComment,
 	deleteComment,
