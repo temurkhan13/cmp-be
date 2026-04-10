@@ -169,7 +169,7 @@ const create = async (sitemapBody) => {
 		const { data: playbook, error: insertError } = await supabase
 			.from("digital_playbooks")
 			.insert({
-				name: sitemapBody.sitemapName || "Initial Sitemap",
+				name: sitemapBody.message?.substring(0, 100) || sitemapBody.sitemapName || "Initial Sitemap",
 				message: sitemapBody.message,
 				user_id: sitemapBody.userId,
 			})
