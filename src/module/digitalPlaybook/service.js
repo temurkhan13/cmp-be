@@ -237,8 +237,8 @@ const create = async (sitemapBody) => {
 
 		return await getFullPlaybook(playbook.id);
 	} catch (error) {
-		console.error("Failed to send data to AI server:", error.message);
-		throw new ApiError(httpStatus.BAD_REQUEST, "AI server error");
+		console.error("Sitemap/playbook error:", error.message, error.response?.data || "");
+		throw new ApiError(httpStatus.BAD_REQUEST, `Sitemap error: ${error.message}`);
 	}
 };
 
@@ -366,8 +366,8 @@ const updateSitemap = async (id, sitemapBody) => {
 
 		return await getFullPlaybook(playbook.id);
 	} catch (error) {
-		console.error("Failed to send data to AI server:", error.message);
-		throw new ApiError(httpStatus.BAD_REQUEST, "AI server error");
+		console.error("Sitemap/playbook error:", error.message, error.response?.data || "");
+		throw new ApiError(httpStatus.BAD_REQUEST, `Sitemap error: ${error.message}`);
 	}
 };
 
@@ -476,8 +476,8 @@ const wireFrame = async (wireframeBody) => {
 		const response = gptResponse.data;
 		return response;
 	} catch (error) {
-		console.error("Failed to send data to AI server:", error.message);
-		throw new ApiError(httpStatus.BAD_REQUEST, "AI server error");
+		console.error("Sitemap/playbook error:", error.message, error.response?.data || "");
+		throw new ApiError(httpStatus.BAD_REQUEST, `Sitemap error: ${error.message}`);
 	}
 };
 

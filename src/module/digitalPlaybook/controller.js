@@ -4,8 +4,9 @@ const service = require("./service");
 const pick = require("../../utils/pick");
 
 const create = catchAsync(async (req, res) => {
-	const { body } = req;
-	// body.user = user._id;
+	const { body, user } = req;
+	// Map user_id from frontend or fall back to authenticated user
+	body.userId = body.userId || body.user_id || user._id;
 	const sitemap = await service.create(body);
 	res.status(httpStatus.OK).send(sitemap);
 });
