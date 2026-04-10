@@ -69,7 +69,11 @@ const query = async (filter, options) => {
 	const paginateFilter = {};
 	if (filter.userId) paginateFilter.user_id = filter.userId;
 	if (filter.isSoftDeleted !== undefined) paginateFilter.is_soft_deleted = filter.isSoftDeleted;
-	return await paginate("workspaces", { ...options, filter: paginateFilter }, supabase);
+	const result = await paginate("workspaces", { ...options, filter: paginateFilter }, supabase);
+	if (result.results) {
+		result.results = result.results.map(formatWorkspace);
+	}
+	return result;
 };
 
 const get = async (id) => {
