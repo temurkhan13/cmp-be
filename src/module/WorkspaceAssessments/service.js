@@ -74,12 +74,7 @@ const createWorkspaceAssessment = async (body) => {
 		return { status: true, data: full, message: "Assessment already exists" };
 	}
 
-	const { data: assessment, error } = await supabase.from("workspace_assessments").insert({
-		user_id: userId, workspace_id: workspaceId, folder_id: folderId, name, status: "pending",
-	}).select().single();
-	if (error) throw error;
-
-	// Fetch business info from folder for AI context
+	// Fetch business info BEFORE inserting — fail fast if AI is down
 	const { data: bizInfo } = await supabase.from("folder_business_info").select("*").eq("folder_id", folderId).maybeSingle();
 	const businessInfoStr = bizInfo
 		? `Company: ${bizInfo.company_name || ""}, Size: ${bizInfo.company_size || ""}, Industry: ${bizInfo.industry || ""}, Role: ${bizInfo.job_title || ""}`
@@ -89,11 +84,19 @@ const createWorkspaceAssessment = async (body) => {
 		userId, chat_id: folderId, message: body.message || "",
 		general_info: body.generalInfo || "", business_info: businessInfoStr || body.business_info || "", assessment_name: name,
 	};
+
+	// Call AI FIRST — if it fails, don't create a zombie record
 	const aiResponse = await requestQuestionOrReportFromAI(aiPayload);
-	if (!aiResponse.status) return handleStatus(false, aiResponse.message);
+	if (!aiResponse.status) return handleStatus(false, "AI service unavailable — please try again");
 
 	const { data: aiData } = aiResponse;
-	if (!aiData?.message) return handleStatus(false, "No message found in AI response");
+	if (!aiData?.message) return handleStatus(false, "AI returned empty response — please try again");
+
+	// AI succeeded — now safe to insert the assessment record
+	const { data: assessment, error } = await supabase.from("workspace_assessments").insert({
+		user_id: userId, workspace_id: workspaceId, folder_id: folderId, name, status: "pending",
+	}).select().single();
+	if (error) throw error;
 
 	const shouldGenerateReport = isMarkdownDetected(aiData.message);
 
@@ -105,7 +108,6 @@ const createWorkspaceAssessment = async (body) => {
 			url: pdf.publicUrl, storage_path: pdf.storagePath, generated_at: new Date(),
 		});
 		await supabase.from("workspace_assessments").update({ status: "completed" }).eq("id", assessment.id);
-		// RAG: ingest report
 		ingestToRAG(userId, folderId, `assessment-report-${assessment.id}`, `Assessment Report: ${name}\n\n${aiData.message}`);
 	} else {
 		await supabase.from("assessment_qa").insert({
@@ -196,19 +198,9 @@ const updateAssessmentAnswer = async (workspaceAssessmentId, body) => {
 	if (!question) return handleStatus(false, "Question not found");
 	if (question.status !== "pending") return handleStatus(false, "Question already answered");
 
-	await supabase.from("assessment_qa").update({
-		answer, status: "answered", answered_at: new Date(),
-	}).eq("id", questionId);
-
-	// RAG: ingest the Q&A pair
-	ingestToRAG(
-		assessment.user_id, assessment.folder_id,
-		`assessment-qa-${workspaceAssessmentId}-${questionId}`,
-		`Assessment: ${assessment.name}\nQ: ${question.question}\nA: ${answer}`
-	);
-
+	// Build history BEFORE marking answered (include this answer in history for AI)
 	const { data: qaHistory } = await supabase.from("assessment_qa").select().eq("assessment_id", workspaceAssessmentId).order("created_at");
-	const history = ["", ...(qaHistory || []).flatMap((q) => [q.question, q.answer])];
+	const history = ["", ...(qaHistory || []).flatMap((q) => [q.question, q.answer || ""]), answer];
 
 	// Fetch business info for AI context
 	const { data: bizInfo } = await supabase.from("folder_business_info").select("*").eq("folder_id", assessment.folder_id).maybeSingle();
@@ -220,11 +212,25 @@ const updateAssessmentAnswer = async (workspaceAssessmentId, body) => {
 		userId: assessment.user_id, chat_id: assessment.folder_id, message: answer || "",
 		history, general_info: "", business_info: businessInfoStr, assessment_name: assessment.name,
 	};
+
+	// Call AI FIRST — if it fails, don't mark question as answered (user can retry)
 	const aiResponse = await requestQuestionOrReportFromAI(aiPayload);
-	if (!aiResponse.status) return handleStatus(false, aiResponse.message);
+	if (!aiResponse.status) return handleStatus(false, "AI service unavailable — your answer was not saved, please try again");
 
 	const { data: aiData } = aiResponse;
-	if (!aiData?.message) return handleStatus(false, "No message found in AI response");
+	if (!aiData?.message) return handleStatus(false, "AI returned empty response — your answer was not saved, please try again");
+
+	// AI succeeded — now safe to mark question as answered
+	await supabase.from("assessment_qa").update({
+		answer, status: "answered", answered_at: new Date(),
+	}).eq("id", questionId);
+
+	// RAG: ingest the Q&A pair (best-effort)
+	ingestToRAG(
+		assessment.user_id, assessment.folder_id,
+		`assessment-qa-${workspaceAssessmentId}-${questionId}`,
+		`Assessment: ${assessment.name}\nQ: ${question.question}\nA: ${answer}`
+	);
 
 	if (isMarkdownDetected(aiData.message)) {
 		const pdf = await generateAndConvertMarkdownToPDF(aiData.message);
