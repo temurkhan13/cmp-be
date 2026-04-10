@@ -36,6 +36,41 @@ const createWorkspaceAssessment = async (body) => {
 		.select("id").eq("folder_id", folderId).eq("name", name).maybeSingle();
 	if (existing) {
 		const full = await getWorkspaceAssessmentById(existing.id);
+		const hasQA = full.qa && full.qa.length > 0;
+		const hasReport = full.report && full.report.isGenerated;
+		// If assessment exists but has no Q&A and no report (zombie from failed AI call), retry
+		if (!hasQA && !hasReport) {
+			logger.info(`Zombie assessment ${existing.id} found — retrying AI call`);
+			const { data: bizInfo } = await supabase.from("folder_business_info").select("*").eq("folder_id", folderId).maybeSingle();
+			const businessInfoStr = bizInfo
+				? `Company: ${bizInfo.company_name || ""}, Size: ${bizInfo.company_size || ""}, Industry: ${bizInfo.industry || ""}, Role: ${bizInfo.job_title || ""}`
+				: "";
+			const aiPayload = {
+				userId, chat_id: folderId, message: body.message || "",
+				general_info: body.generalInfo || "", business_info: businessInfoStr || body.business_info || "", assessment_name: name,
+			};
+			const aiResponse = await requestQuestionOrReportFromAI(aiPayload);
+			if (aiResponse.status && aiResponse.data?.message) {
+				const aiData = aiResponse.data;
+				if (isMarkdownDetected(aiData.message)) {
+					const pdf = await generateAndConvertMarkdownToPDF(aiData.message);
+					await supabase.from("assessment_reports").insert({
+						assessment_id: existing.id, is_generated: true,
+						title: aiData.title || "Report Title", content: aiData.message,
+						url: pdf.publicUrl, storage_path: pdf.storagePath, generated_at: new Date(),
+					});
+					await supabase.from("workspace_assessments").update({ status: "completed" }).eq("id", existing.id);
+					ingestToRAG(userId, folderId, `assessment-report-${existing.id}`, `Assessment Report: ${name}\n\n${aiData.message}`);
+				} else {
+					await supabase.from("assessment_qa").insert({
+						assessment_id: existing.id, question: aiData.message, status: "pending", asked_at: new Date(),
+					});
+					await supabase.from("workspace_assessments").update({ status: "in_progress" }).eq("id", existing.id);
+				}
+				const refreshed = await getWorkspaceAssessmentById(existing.id);
+				return { status: true, data: refreshed, message: "Assessment recovered successfully" };
+			}
+		}
 		return { status: true, data: full, message: "Assessment already exists" };
 	}
 
