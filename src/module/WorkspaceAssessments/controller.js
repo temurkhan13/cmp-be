@@ -15,10 +15,12 @@ const getWorkspaceAssessments = catchAsync(async (req, res) => {
 	res.send(result);
 });
 const getWorkspaceAssessment = catchAsync(async (req, res) => {
-	const workspaceAssessment = await workspaceAssessmentService.getWorkspaceAssessmentById(req.params.workspaceAssessmentId);
+	let workspaceAssessment = await workspaceAssessmentService.getWorkspaceAssessmentById(req.params.workspaceAssessmentId);
 	if (!workspaceAssessment) {
 		throw new ApiError(httpStatus.NOT_FOUND, "Workspace assessment not found");
 	}
+	// Self-heal zombie assessments (created during AI outage with no Q&A/report)
+	workspaceAssessment = await workspaceAssessmentService.recoverZombieIfNeeded(workspaceAssessment);
 	res.send(workspaceAssessment);
 });
 const updateWorkspaceAssessment = catchAsync(async (req, res) => {

@@ -154,6 +154,55 @@ const getWorkspaceAssessmentById = async (id) => {
 	return data;
 };
 
+/**
+ * Detect and recover zombie assessments (no Q&A, no report).
+ * Called from GET endpoint so zombies self-heal when accessed.
+ * Returns the healed assessment, or the original if not a zombie or recovery fails.
+ */
+const recoverZombieIfNeeded = async (assessment) => {
+	if (!assessment) return assessment;
+	const hasQA = assessment.qa && assessment.qa.length > 0;
+	const hasReport = assessment.report && assessment.report.isGenerated;
+	if (hasQA || hasReport) return assessment; // Not a zombie
+
+	logger.info(`Zombie assessment ${assessment.id} detected on GET — recovering`);
+	try {
+		const { data: bizInfo } = await supabase.from("folder_business_info").select("*").eq("folder_id", assessment.folder_id).maybeSingle();
+		const businessInfoStr = bizInfo
+			? `Company: ${bizInfo.company_name || ""}, Size: ${bizInfo.company_size || ""}, Industry: ${bizInfo.industry || ""}, Role: ${bizInfo.job_title || ""}`
+			: "";
+		const aiPayload = {
+			userId: assessment.user_id, chat_id: assessment.folder_id, message: "",
+			general_info: "", business_info: businessInfoStr, assessment_name: assessment.name,
+		};
+		const aiResponse = await requestQuestionOrReportFromAI(aiPayload);
+		if (!aiResponse.status || !aiResponse.data?.message) {
+			logger.warn(`Zombie recovery failed for ${assessment.id} — AI unavailable`);
+			return assessment;
+		}
+		const aiData = aiResponse.data;
+		if (isMarkdownDetected(aiData.message)) {
+			const pdf = await generateAndConvertMarkdownToPDF(aiData.message);
+			await supabase.from("assessment_reports").insert({
+				assessment_id: assessment.id, is_generated: true,
+				title: aiData.title || "Report Title", content: aiData.message,
+				url: pdf.publicUrl, storage_path: pdf.storagePath, generated_at: new Date(),
+			});
+			await supabase.from("workspace_assessments").update({ status: "completed" }).eq("id", assessment.id);
+		} else {
+			await supabase.from("assessment_qa").insert({
+				assessment_id: assessment.id, question: aiData.message, status: "pending", asked_at: new Date(),
+			});
+			await supabase.from("workspace_assessments").update({ status: "in_progress" }).eq("id", assessment.id);
+		}
+		logger.info(`Zombie assessment ${assessment.id} recovered successfully`);
+		return await getWorkspaceAssessmentById(assessment.id);
+	} catch (e) {
+		logger.error(`Zombie recovery error for ${assessment.id}: ${e.message}`);
+		return assessment;
+	}
+};
+
 const updateWorkspaceAssessmentById = async (id, body) => {
 	const existing = await getWorkspaceAssessmentById(id);
 	if (!existing) return handleStatus(false, "Workspace assessment not found");
@@ -303,6 +352,7 @@ module.exports = {
 	createWorkspaceAssessment,
 	queryWorkspaceAssessments,
 	getWorkspaceAssessmentById,
+	recoverZombieIfNeeded,
 	updateWorkspaceAssessmentById,
 	deleteWorkspaceAssessmentById,
 	updateAssessmentAnswer,
