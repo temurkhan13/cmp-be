@@ -12,6 +12,7 @@ router
 router.route("/sitemap/:id").get(auth(), controller.getSitemap).patch(auth(), controller.updateSitemap).delete(auth(), controller.deleteSitemap);
 router.patch("/update/sitemap/:id", auth(), controller.updateSitemapFields);
 router.post("/wireframe", auth(), controller.wireFrame);
+router.post("/inspire", auth(), controller.inspire);
 router.post("/sitemap/:playbookId/stage/:stageId/node/:nodeId/nodedata/:nodeDataId/comment", auth(), controller.createComment);
 router.patch("/sitemap/simple-update/:id", auth(), controller.simpleUpdate);
 router.post("/:playbookId/stage/:stageId/nodes", auth(), controller.addNode);
