@@ -92,11 +92,15 @@ const assistantChatUpdate = catchAsync(async (req, res) => {
 	if (req.file) {
 		const fileType = req.file.mimetype.split("/")[0];
 		body.pdfPath = req.file.filename;
+		console.log("File uploaded:", req.file.originalname, "->", req.file.filename, "mimetype:", req.file.mimetype);
 		if (fileType === "image") {
 			body.media = [{ fileName: req.file.originalname, url: req.file.filename, timestamp: new Date() }];
-		} else if (req.file.mimetype === "application/pdf") {
+		} else {
+			// PDF, DOCX, TXT, CSV, etc — all treated as documents
 			body.documents = [{ fileName: req.file.originalname, name: req.file.filename, date: new Date(), size: req.file.size }];
 		}
+	} else {
+		console.log("No file in request. Body keys:", Object.keys(body));
 	}
 
 	const doc = await service.assistantChatUpdate(workspaceId, folderId, chatId, body);
@@ -351,6 +355,13 @@ const getUserChats = catchAsync(async (req, res) => {
 
 	const chat = await service.getUserChats(userId, query);
 	res.status(httpStatus.OK).send(chat);
+});
+const searchChats = catchAsync(async (req, res) => {
+	const { user } = req;
+	const { q, workspaceId } = req.query;
+	if (!q || !q.trim()) return res.status(httpStatus.OK).send([]);
+	const results = await service.searchChats(user._id, q.trim(), workspaceId);
+	res.status(httpStatus.OK).send(results);
 });
 const getUserAssessments = catchAsync(async (req, res) => {
 	const { user } = req;
