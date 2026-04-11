@@ -95,6 +95,17 @@ const deleteReply = catchAsync(async (req, res) => {
 	await service.deleteReply(playbookId, stageId, nodeId, nodeDataId, commentId, replyId);
 	res.status(httpStatus.NO_CONTENT).send();
 });
+const deleteStage = catchAsync(async (req, res) => {
+	const { playbookId, stageId } = req.params;
+	const result = await service.deleteStage(playbookId, stageId);
+	res.status(httpStatus.OK).send(result);
+});
+const convertSitemapToPlaybook = catchAsync(async (req, res) => {
+	const { sitemapId } = req.params;
+	const userId = req.user._id || req.user.id;
+	const playbook = await service.convertSitemapToPlaybook(sitemapId, userId);
+	res.status(httpStatus.CREATED).send(playbook);
+});
 const inspire = catchAsync(async (req, res) => {
 	const { body, user } = req;
 	body.userId = body.userId || body.user_id || user._id;
@@ -142,6 +153,8 @@ module.exports = {
 	updateReply,
 	deleteReply,
 	inspire,
+	deleteStage,
+	convertSitemapToPlaybook,
 	simpleUpdate,
 	addNode,
 	addNodeData,

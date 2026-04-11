@@ -989,6 +989,113 @@ const updateType = async (playbookId, stageId, type, typeId, updateBody) => {
 	return await getFullPlaybook(playbookId);
 };
 
+const deleteStage = async (playbookId, stageId) => {
+	// Verify playbook exists
+	const { data: playbook } = await supabase
+		.from("digital_playbooks")
+		.select("id")
+		.eq("id", playbookId)
+		.single();
+	if (!playbook) throw new ApiError(httpStatus.BAD_REQUEST, "Playbook not found");
+
+	// Verify stage exists
+	const { data: stage } = await supabase
+		.from("playbook_stages")
+		.select("id")
+		.eq("id", stageId)
+		.eq("playbook_id", playbookId)
+		.single();
+	if (!stage) throw new ApiError(httpStatus.BAD_REQUEST, "Stage not found");
+
+	// Delete nodeData comments/replies first
+	const { data: nodeDataRows } = await supabase
+		.from("playbook_stage_node_data")
+		.select("id")
+		.eq("stage_id", stageId);
+	const nodeDataIds = (nodeDataRows || []).map((nd) => nd.id);
+
+	if (nodeDataIds.length > 0) {
+		const { data: comments } = await supabase
+			.from("playbook_comments")
+			.select("id")
+			.in("node_data_id", nodeDataIds);
+		const commentIds = (comments || []).map((c) => c.id);
+
+		if (commentIds.length > 0) {
+			await supabase.from("playbook_comment_replies").delete().in("comment_id", commentIds);
+			await supabase.from("playbook_comments").delete().in("node_data_id", nodeDataIds);
+		}
+	}
+
+	// Delete nodeData, nodes, then stage
+	await supabase.from("playbook_stage_node_data").delete().eq("stage_id", stageId);
+	await supabase.from("playbook_nodes").delete().eq("stage_id", stageId);
+	await supabase.from("playbook_stages").delete().eq("id", stageId);
+
+	return { success: true };
+};
+
+const convertSitemapToPlaybook = async (sitemapId, userId) => {
+	// Read existing sitemap/playbook as source
+	const source = await getFullPlaybook(sitemapId);
+	if (!source) throw new ApiError(httpStatus.BAD_REQUEST, "Sitemap not found");
+
+	// Create new playbook
+	const { data: newPlaybook, error: insertError } = await supabase
+		.from("digital_playbooks")
+		.insert({
+			name: `${source.name} — Playbook`,
+			message: source.message,
+			user_id: userId,
+		})
+		.select()
+		.single();
+	if (insertError) throw new ApiError(httpStatus.BAD_REQUEST, insertError.message);
+
+	// Copy stages, nodes, nodeData
+	for (const srcStage of source.stages || []) {
+		const { data: newStage } = await supabase
+			.from("playbook_stages")
+			.insert({ playbook_id: newPlaybook.id, stage: srcStage.stage })
+			.select()
+			.single();
+		if (!newStage) continue;
+
+		// Copy stage-level nodeData
+		for (const nd of srcStage.nodeData || []) {
+			await supabase.from("playbook_stage_node_data").insert({
+				stage_id: newStage.id,
+				node_id: null,
+				heading: nd.heading,
+				description: nd.description,
+				color: nd.color,
+			});
+		}
+
+		// Copy nodes and their nodeData
+		for (const srcNode of srcStage.nodes || []) {
+			const { data: newNode } = await supabase
+				.from("playbook_nodes")
+				.insert({ stage_id: newStage.id, heading: srcNode.heading })
+				.select()
+				.single();
+			if (!newNode) continue;
+
+			for (const nd of srcNode.nodeData || []) {
+				await supabase.from("playbook_stage_node_data").insert({
+					stage_id: newStage.id,
+					node_id: newNode.id,
+					heading: nd.heading,
+					description: nd.description,
+					color: nd.color,
+				});
+			}
+		}
+	}
+
+	return await getFullPlaybook(newPlaybook.id);
+};
+
 const inspire = async (inspireBody) => {
 	try {
 		const initialBody = {
@@ -1014,6 +1121,8 @@ module.exports = {
 	updateSitemapFields,
 	wireFrame,
 	inspire,
+	deleteStage,
+	convertSitemapToPlaybook,
 	createComment,
 	updateComment,
 	deleteComment,
