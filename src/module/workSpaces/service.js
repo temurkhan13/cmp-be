@@ -597,12 +597,19 @@ const assistantChatUpdate = async (workspaceId, folderId, chatId, messageData) =
 						} catch (pdfErr) {
 							console.log("PDF parse error, reading as binary:", pdfErr.message);
 						}
+					} else if (ext === ".docx") {
+						try {
+							const mammoth = require("mammoth");
+							const result = await mammoth.extractRawText({ path: filePath });
+							fileContent = result.value || "";
+						} catch (docxErr) {
+							console.log("DOCX parse error:", docxErr.message);
+						}
 					} else {
-						// docx, txt, csv, etc — read as text (best effort)
+						// txt, csv, etc — read as text
 						try {
 							fileContent = fs.readFileSync(filePath, "utf-8");
 						} catch (readErr) {
-							// Binary file, try reading first bytes as text
 							const buf = fs.readFileSync(filePath);
 							fileContent = buf.toString("utf-8").replace(/[^\x20-\x7E\n\r\t]/g, " ").trim();
 						}
