@@ -33,6 +33,13 @@ router
 router.post("/:workspaceId/folder/:folderId/chat/:chatId/share", auth(), controller.shareChat);
 router.post("/invite/accept", controller.acceptChatInvite);
 
+router.post(
+	"/extract-text",
+	auth(),
+	fileUpload.single("pdfPath"),
+	controller.extractFileText,
+);
+
 router.patch(
 	"/:workspaceId/folder/:folderId/chat/:chatId/message",
 	auth(),

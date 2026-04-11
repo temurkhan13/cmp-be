@@ -84,6 +84,43 @@ const acceptChatInvite = catchAsync(async (req, res) => {
 
 	res.status(httpStatus.OK).send(chat);
 });
+const extractFileText = catchAsync(async (req, res) => {
+	if (!req.file) {
+		return res.status(400).json({ text: "", error: "No file uploaded" });
+	}
+	const fs = require("fs");
+	const pathMod = require("path");
+	const filePath = pathMod.join("public/uploads", req.file.filename);
+	let text = "";
+
+	try {
+		const ext = pathMod.extname(req.file.originalname).toLowerCase();
+		if (ext === ".pdf") {
+			const pdfParse = require("pdf-parse");
+			const buf = fs.readFileSync(filePath);
+			const data = await pdfParse(buf);
+			text = data.text || "";
+		} else if (ext === ".docx") {
+			const mammoth = require("mammoth");
+			const result = await mammoth.extractRawText({ path: filePath });
+			text = result.value || "";
+		} else {
+			text = fs.readFileSync(filePath, "utf-8");
+		}
+	} catch (e) {
+		console.error("Extract text error:", e.message);
+	}
+
+	// Clean up uploaded file
+	try { fs.unlinkSync(filePath); } catch (e) { /* ignore */ }
+
+	if (text.length > 30000) {
+		text = text.substring(0, 30000) + "\n[...truncated...]";
+	}
+
+	res.status(200).json({ text, filename: req.file.originalname });
+});
+
 const assistantChatUpdate = catchAsync(async (req, res) => {
 	const { workspaceId, folderId } = req.params;
 	let { chatId } = req.params;
@@ -520,6 +557,7 @@ module.exports = {
 	get,
 	update,
 	deleteWorkspace,
+	extractFileText,
 	createFolder,
 	updateFolder,
 	deleteFolder,
