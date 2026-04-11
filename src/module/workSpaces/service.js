@@ -594,8 +594,9 @@ const assistantChatUpdate = async (workspaceId, folderId, chatId, messageData) =
 							const dataBuffer = fs.readFileSync(filePath);
 							const pdfData = await pdfParse(dataBuffer);
 							fileContent = pdfData.text || "";
+							console.log("PDF parsed successfully:", fileContent.length, "chars");
 						} catch (pdfErr) {
-							console.log("PDF parse error, reading as binary:", pdfErr.message);
+							console.log("PDF parse error:", pdfErr.message);
 						}
 					} else if (ext === ".docx") {
 						try {
