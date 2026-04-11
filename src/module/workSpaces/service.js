@@ -579,28 +579,58 @@ const assistantChatUpdate = async (workspaceId, folderId, chatId, messageData) =
 			await supabase.from("folder_chat_documents").insert(docRows);
 		}
 
-		if (isMedia || isDocument) {
-			const uploadBody = {
-				pdf_file: messageData?.media?.at(0) || messageData?.documents?.at(0),
-				user_id: messageData.sender,
-				chat_id: chatId,
-			};
+		// Read uploaded file content directly from disk
+		let fileContent = "";
+		if (messageData.pdfPath) {
 			try {
-				const uploadResponse = await axios.post(`${config.baseUrl}/upload-files`, uploadBody);
-				// RAG ingest - best-effort, don't fail the request
+				const fs = require("fs");
+				const pathMod = require("path");
+				const filePath = pathMod.join("public/uploads", messageData.pdfPath);
+				if (fs.existsSync(filePath)) {
+					const ext = pathMod.extname(messageData.pdfPath).toLowerCase();
+					if (ext === ".pdf") {
+						try {
+							const pdfParse = require("pdf-parse");
+							const dataBuffer = fs.readFileSync(filePath);
+							const pdfData = await pdfParse(dataBuffer);
+							fileContent = pdfData.text || "";
+						} catch (pdfErr) {
+							console.log("PDF parse error, reading as binary:", pdfErr.message);
+						}
+					} else {
+						// docx, txt, csv, etc — read as text (best effort)
+						try {
+							fileContent = fs.readFileSync(filePath, "utf-8");
+						} catch (readErr) {
+							// Binary file, try reading first bytes as text
+							const buf = fs.readFileSync(filePath);
+							fileContent = buf.toString("utf-8").replace(/[^\x20-\x7E\n\r\t]/g, " ").trim();
+						}
+					}
+					if (fileContent.length > 30000) {
+						fileContent = fileContent.substring(0, 30000) + "\n[...truncated...]";
+					}
+					console.log(`File read: ${messageData.pdfPath} (${fileContent.length} chars)`);
+				} else {
+					console.log("File not found:", filePath);
+				}
+			} catch (e) {
+				console.log("File read error:", e.message);
+			}
+
+			// RAG ingest for future searches
+			if (fileContent) {
 				try {
 					await axios.post(`${config.baseUrl}/ingest`, {
 						user_id: String(messageData.sender),
 						workspace_id: "",
 						folder_id: "",
-						filename: uploadBody.pdf_file,
-						content: uploadResponse.data.message || "",
+						filename: messageData.pdfPath,
+						content: fileContent,
 					});
 				} catch (e) {
 					console.log("RAG ingest skipped:", e.message);
 				}
-			} catch (error) {
-				throw new Error("AI server error");
 			}
 		}
 
@@ -614,28 +644,11 @@ const assistantChatUpdate = async (workspaceId, folderId, chatId, messageData) =
 
 		const textMessages = (allMessages || []).map((m) => m.text);
 
-		// If there are documents, search RAG for relevant content to include
-		let ragContext = "";
-		if (isDocument || isMedia) {
-			try {
-				const searchRes = await axios.post(`${config.baseUrl}/search`, {
-					user_id: String(messageData.sender),
-					query: messageData.text || "summarize the document",
-					limit: 5,
-				});
-				if (searchRes.data?.results?.length > 0) {
-					ragContext = searchRes.data.results.map((r) => r.content || r.text || "").join("\n\n");
-				}
-			} catch (e) {
-				console.log("RAG search skipped:", e.message);
-			}
-		}
-
 		const aiBody = {
 			user_id: messageData.sender,
 			chat_id: chatId,
-			message: ragContext
-				? `Context from uploaded document:\n${ragContext}\n\nUser question: ${messageData.text}`
+			message: fileContent
+				? `The user uploaded a document. Here is its content:\n\n${fileContent}\n\nUser question: ${messageData.text || "Please analyze and summarize this document."}`
 				: messageData.text,
 			history: textMessages,
 		};
