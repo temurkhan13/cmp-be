@@ -614,10 +614,29 @@ const assistantChatUpdate = async (workspaceId, folderId, chatId, messageData) =
 
 		const textMessages = (allMessages || []).map((m) => m.text);
 
+		// If there are documents, search RAG for relevant content to include
+		let ragContext = "";
+		if (isDocument || isMedia) {
+			try {
+				const searchRes = await axios.post(`${config.baseUrl}/search`, {
+					user_id: String(messageData.sender),
+					query: messageData.text || "summarize the document",
+					limit: 5,
+				});
+				if (searchRes.data?.results?.length > 0) {
+					ragContext = searchRes.data.results.map((r) => r.content || r.text || "").join("\n\n");
+				}
+			} catch (e) {
+				console.log("RAG search skipped:", e.message);
+			}
+		}
+
 		const aiBody = {
 			user_id: messageData.sender,
 			chat_id: chatId,
-			message: messageData.text,
+			message: ragContext
+				? `Context from uploaded document:\n${ragContext}\n\nUser question: ${messageData.text}`
+				: messageData.text,
 			history: textMessages,
 		};
 
