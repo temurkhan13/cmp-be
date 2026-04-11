@@ -257,9 +257,39 @@ const updateAssessmentAnswer = async (workspaceAssessmentId, body) => {
 		? `Company: ${bizInfo.company_name || ""}, Size: ${bizInfo.company_size || ""}, Industry: ${bizInfo.industry || ""}, Role: ${bizInfo.job_title || ""}`
 		: "";
 
+	// Fetch completed assessments in same folder for cross-assessment context
+	let priorAssessmentContext = "";
+	try {
+		const { data: otherAssessments } = await supabase
+			.from("workspace_assessments")
+			.select("id, name, status")
+			.eq("folder_id", assessment.folder_id)
+			.eq("status", "completed")
+			.neq("id", workspaceAssessmentId)
+			.limit(5);
+		if (otherAssessments && otherAssessments.length > 0) {
+			const summaries = [];
+			for (const oa of otherAssessments) {
+				const { data: report } = await supabase
+					.from("assessment_reports")
+					.select("content")
+					.eq("assessment_id", oa.id)
+					.maybeSingle();
+				if (report?.content) {
+					summaries.push(`[${oa.name}]: ${report.content.substring(0, 500)}`);
+				}
+			}
+			if (summaries.length > 0) {
+				priorAssessmentContext = "Context from prior completed assessments:\n" + summaries.join("\n\n");
+			}
+		}
+	} catch (e) {
+		logger.info("Prior assessment context fetch skipped:", e.message);
+	}
+
 	const aiPayload = {
 		userId: assessment.user_id, chat_id: assessment.folder_id, message: answer || "",
-		history, general_info: "", business_info: businessInfoStr, assessment_name: assessment.name,
+		history, general_info: priorAssessmentContext, business_info: businessInfoStr, assessment_name: assessment.name,
 	};
 
 	// Call AI FIRST — if it fails, don't mark question as answered (user can retry)
