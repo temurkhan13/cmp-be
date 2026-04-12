@@ -279,11 +279,29 @@ const getAssistantChat = async (workspaceId, folderId, chatId) => {
 			.select("*")
 			.eq("chat_id", chatId);
 
-		// Attach comments to their messages
+		// Fetch replies for all comments
+		const commentIds = (comments || []).map(c => c.id);
+		let repliesByComment = {};
+		if (commentIds.length > 0) {
+			const { data: replies } = await supabase
+				.from("folder_chat_comment_replies")
+				.select("*")
+				.in("comment_id", commentIds)
+				.order("created_at", { ascending: true });
+			(replies || []).forEach(r => {
+				if (!repliesByComment[r.comment_id]) repliesByComment[r.comment_id] = [];
+				repliesByComment[r.comment_id].push({ ...r, _id: r.id, replyId: r.id, userName: r.user_name, userId: r.user_id });
+			});
+		}
+
+		// Attach comments (with replies) to their messages
 		const commentsByMessage = {};
 		(comments || []).forEach(c => {
 			if (!commentsByMessage[c.message_id]) commentsByMessage[c.message_id] = [];
-			commentsByMessage[c.message_id].push({ ...c, _id: c.id, messageId: c.message_id, userId: c.user_id, userName: c.user_name });
+			commentsByMessage[c.message_id].push({
+				...c, _id: c.id, messageId: c.message_id, userId: c.user_id, userName: c.user_name,
+				replies: repliesByComment[c.id] || [],
+			});
 		});
 
 		// Map reactions to camelCase (frontend expects react.user, react.type)
