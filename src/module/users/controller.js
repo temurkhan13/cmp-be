@@ -20,7 +20,7 @@ const register = catchAsync(async (req, res) => {
 const login = catchAsync(async (req, res) => {
 	const { email, password } = req.body;
 	const user = await userService.loginUserWithEmailAndPassword(email, password);
-	tokens = await tokenService.generateAuthTokens(user);
+	const tokens = await tokenService.generateAuthTokens(user);
 	res.send({ user, tokens });
 });
 
@@ -70,8 +70,8 @@ const refreshTokens = catchAsync(async (req, res) => {
  */
 const forgotPassword = catchAsync(async (req, res) => {
 	const { email } = req.body;
-	const OTP = await userService.forgotPassword(email);
-	res.send({ OTP });
+	await userService.forgotPassword(email);
+	res.send({ success: true, message: 'OTP sent to your email' });
 });
 
 const resetPassword = catchAsync(async (req, res) => {
