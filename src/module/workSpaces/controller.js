@@ -178,8 +178,8 @@ const createComment = catchAsync(async (req, res) => {
 	// const { messageId } = req.body;
 	const { user, body } = req;
 
-	body.userId = user._id;
-	body.userName = `${user.firstName} ${user.lastName}`;
+	body.userId = user._id || user.id;
+	body.userName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'User';
 	body.timestamp = new Date();
 
 	if (contextType === "chat") body.messageId = messageId;
@@ -189,9 +189,7 @@ const createComment = catchAsync(async (req, res) => {
 	res.status(httpStatus.CREATED).send(comment);
 });
 const getUserChatComments = catchAsync(async (req, res) => {
-	console.log("req===", req);
-	const userId = req.user._id;
-	console.log("userId", userId);
+	const userId = req.user._id || req.user.id;
 	const bookmarks = await service.getUserChatComments(userId);
 	res.status(httpStatus.OK).send(bookmarks);
 });
@@ -226,9 +224,7 @@ const unbookmarkMessage = catchAsync(async (req, res) => {
 	res.status(httpStatus.OK).send(bookmark);
 });
 const getBookmarksForUser = catchAsync(async (req, res) => {
-	console.log("req===", req);
-	const userId = req.user._id;
-	console.log("userId", userId);
+	const userId = req.user._id || req.user.id;
 	const bookmarks = await service.getBookmarksForUser(userId);
 	res.status(httpStatus.OK).send(bookmarks);
 });
@@ -241,8 +237,8 @@ const getBookmarksForChat = catchAsync(async (req, res) => {
 const addReplyToComment = catchAsync(async (req, res) => {
 	const { workspaceId, folderId, chatId, messageId, commentId } = req.params;
 	const { user, body } = req;
-	body.userId = user._id;
-	body.userName = `${user.firstName} ${user.lastName}`;
+	body.userId = user._id || user.id;
+	body.userName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'User';
 	body.timestamp = new Date();
 	const reply = await service.addReplyToComment(workspaceId, folderId, chatId, messageId, commentId, body);
 	res.status(httpStatus.CREATED).send(reply);
