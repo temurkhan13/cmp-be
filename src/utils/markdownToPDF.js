@@ -95,6 +95,9 @@ const convertMarkdownToPDF = (markdown) => {
 		const htmlContent = md.render(markdown).split("\n");
 		let inBlockquote = false;
 		let inCodeBlock = false;
+		let inTable = false;
+		let tableHeaders = [];
+		let tableAlignments = [];
 
 		htmlContent.forEach((line) => {
 			line = line.trim();

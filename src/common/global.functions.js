@@ -6,11 +6,7 @@ const { info, error: _error } = require("../config/logger");
 
 const isArrayWithLength = (arr) => Array.isArray(arr) && arr.length > 0;
 const makeAxiosCall = async ({ url, method, data = null, headers = {}, params = {} }) => {
-	info(`sending axios request to url: ${url}`);
-	info(`sending axios request with method: ${method}`);
-	info(`sending axios request with data: ${JSON.stringify(data)}`);
-	info(`sending axios request with headers: ${JSON.stringify(headers)}`);
-	info(`sending axios request with params: ${JSON.stringify(params)}`);
+	info(`axios ${method} ${url}`);
 
 	try {
 		const response = await axios({
@@ -19,11 +15,13 @@ const makeAxiosCall = async ({ url, method, data = null, headers = {}, params = 
 			data,
 			headers,
 			params,
+			timeout: 120000, // 2 minute timeout for AI calls
 		});
 
 		return response.data;
 	} catch (error) {
-		_error(error);
+		_error(`Axios call failed: ${error.message}`);
+		throw error;
 	}
 };
 const bearerToken = (token) => {

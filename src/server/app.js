@@ -39,18 +39,23 @@ if (config.env !== "test") {
 }
 
 app.use(helmet());
-app.use(express.json({ limit: "500mb" }));
-app.use(express.urlencoded({ limit: "500mb", extended: true }));
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ limit: "10mb", extended: true }));
 app.use(xss());
 // app.use(mongoSanitize()); // Removed — not needed with PostgreSQL
 app.use(compression());
-app.use(cors());
-app.options("*", cors());
+app.use(cors({
+	origin: [
+		'https://cmp-frontend-gamma.vercel.app',
+		'https://cmp-frontend-temurkhan13s-projects.vercel.app',
+		'https://cmp-frontend-git-main-temurkhan13s-projects.vercel.app',
+		'http://localhost:5173',
+		'http://localhost:3000',
+	],
+	credentials: true,
+}));
 app.use(passport.initialize());
-if (config.env === "production") {
-	app.use("/auth", authLimiter);
-}
+app.use("/api/auth", authLimiter);
 app.use(express.static("public"));
 app.use(logRequest);
 app.get("/", (req, res) => {
