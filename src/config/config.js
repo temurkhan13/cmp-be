@@ -18,8 +18,7 @@ const envVarsSchema = Joi.object()
 		STRIPE_KEY: Joi.string().default("").description("Stripe key"),
 		STRIPE_SECRET_KEY: Joi.string().default("").description("Stripe secret key"),
 		STRIPE_WEBHOOK_SECRET: Joi.string().default("").description("Stripe webhook secret"),
-		NODE_MAILER_EMAIL: Joi.string().default(""),
-		NODE_MAILER_PASSWORD: Joi.string().default(""),
+		RESEND_API_KEY: Joi.string().default("").description("Resend API key for transactional emails"),
 		FRONTEND_URL: Joi.string().default("https://cmp-frontend-gamma.vercel.app").description("Frontend URL"),
 		FRONTEND_LOGIN_URL: Joi.string().default("https://cmp-frontend-gamma.vercel.app/log-in").description("Frontend login URL"),
 	})
@@ -51,11 +50,7 @@ module.exports = {
 		secretKey: envVars.STRIPE_SECRET_KEY,
 		webhookSecret: envVars.STRIPE_WEBHOOK_SECRET,
 	},
-	nodeMailer: {
-		email: envVars.NODE_MAILER_EMAIL,
-		password: envVars.NODE_MAILER_PASSWORD,
-		verificationLink: envVars.EMAIL_VERIFICATION_LINK,
-	},
+	resendApiKey: envVars.RESEND_API_KEY,
 	frontendUrl: envVars.FRONTEND_URL,
 	frontendLoginUrl: envVars.FRONTEND_LOGIN_URL,
 };
