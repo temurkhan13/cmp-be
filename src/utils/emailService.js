@@ -1,16 +1,10 @@
+const { Resend } = require('resend');
 const config = require('../config/config');
-const nodemailer = require('nodemailer');
 const logger = require('../config/logger');
 
-const transporter = nodemailer.createTransport({
-  service: 'Gmail',
-  auth: {
-    user: config.nodeMailer.email,
-    pass: config.nodeMailer.password,
-  },
-});
+const resend = new Resend(config.resendApiKey);
 
-const fromAddress = `"ChangeAI" <${config.nodeMailer.email}>`;
+const fromAddress = 'ChangeAI <onboarding@resend.dev>';
 
 const emailWrapper = (content) => `
 <!DOCTYPE html>
@@ -46,14 +40,15 @@ const sendVerificationEmail = async (email, verificationCode) => {
   `);
 
   try {
-    await transporter.sendMail({
+    const { data, error } = await resend.emails.send({
       from: fromAddress,
       to: email,
       subject: 'Verify your email — ChangeAI',
       text: `Your ChangeAI verification code is: ${verificationCode}`,
       html,
     });
-    logger.info(`Verification email sent to ${email}`);
+    if (error) throw new Error(error.message);
+    logger.info(`Verification email sent to ${email} (id: ${data.id})`);
   } catch (error) {
     logger.error(`Failed to send verification email to ${email}: ${error.message}`);
     throw error;
@@ -75,14 +70,15 @@ const sendForgotPasswordEmail = async (email, verificationCode) => {
   `);
 
   try {
-    await transporter.sendMail({
+    const { data, error } = await resend.emails.send({
       from: fromAddress,
       to: email,
       subject: 'Password Reset Code — ChangeAI',
       text: `Your ChangeAI password reset code is: ${verificationCode}`,
       html,
     });
-    logger.info(`Password reset email sent to ${email}`);
+    if (error) throw new Error(error.message);
+    logger.info(`Password reset email sent to ${email} (id: ${data.id})`);
   } catch (error) {
     logger.error(`Failed to send password reset email to ${email}: ${error.message}`);
     throw error;
@@ -104,14 +100,15 @@ const sendInviteEmail = async (email, inviteLink) => {
   `);
 
   try {
-    await transporter.sendMail({
+    const { data, error } = await resend.emails.send({
       from: fromAddress,
       to: email,
-      subject: 'You\'ve been invited to ChangeAI',
+      subject: "You've been invited to ChangeAI",
       text: `You've been invited to collaborate on ChangeAI. Click here to join: ${inviteLink}`,
       html,
     });
-    logger.info(`Invite email sent to ${email}`);
+    if (error) throw new Error(error.message);
+    logger.info(`Invite email sent to ${email} (id: ${data.id})`);
   } catch (error) {
     logger.error(`Failed to send invite email to ${email}: ${error.message}`);
     throw error;
