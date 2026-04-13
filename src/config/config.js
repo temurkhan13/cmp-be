@@ -23,7 +23,7 @@ const envVarsSchema = Joi.object()
 		SENDGRID_TOKEN: Joi.string().default("").description("SendGrid token"),
 		SENDGRID_EMAIL_FROM: Joi.string().default("").description("SendGrid email"),
 		FRONTEND_URL: Joi.string().default("https://cmp-frontend-gamma.vercel.app").description("Frontend URL"),
-		FRONTEND_LOGIN_URL: Joi.string().default("https://cmp-frontend-gamma.vercel.app/login").description("Frontend login URL"),
+		FRONTEND_LOGIN_URL: Joi.string().default("https://cmp-frontend-gamma.vercel.app/log-in").description("Frontend login URL"),
 	})
 	.unknown();
 
