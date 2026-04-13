@@ -18,6 +18,7 @@ router.post("/forgot/password", validate(validation.forgotPassword), controller.
 router.post("/reset/password", validate(validation.resetPassword), controller.resetPassword);
 router.route("/login").post(validate(validation.login), controller.login);
 router.route("/logout").post(validate(validation.logout), controller.logout);
+router.route("/refresh-tokens").post(controller.refreshTokens);
 router.route("/email/send-verification").post(auth(), controller.sendVerificationEmailToUser);
 
 router
