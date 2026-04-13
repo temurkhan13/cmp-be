@@ -1,7 +1,7 @@
 const httpStatus = require("http-status");
 const ApiError = require("../../utils/ApiError");
 const bcrypt = require("bcryptjs");
-const { sendVerificationEmail, sendForgotPasswordEmail } = require("../../utils/emailService.js");
+const { sendVerificationEmail, sendForgotPasswordEmail, sendWelcomeEmail } = require("../../utils/emailService.js");
 const supabase = require("../../config/supabase");
 const paginate = require("../../utils/paginate");
 const workspaceService = require("../workSpaces/service.js");
@@ -91,6 +91,14 @@ const verifyEmail = async (id, verificationCode) => {
 	if (!existingWs || existingWs.length === 0) {
 		await workspaceService.createDefaultWorkspace(id);
 	}
+
+	// Send branded welcome email (non-blocking)
+	try {
+		await sendWelcomeEmail(user.email, user.first_name);
+	} catch (e) {
+		console.warn("Welcome email failed (non-blocking):", e.message);
+	}
+
 	return true;
 };
 
