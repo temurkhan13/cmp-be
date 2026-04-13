@@ -232,6 +232,80 @@ const inspireMe = async (message) => {
 	}
 };
 
+// ── Assessment Versioning ─────────────────────────────────────────
+
+const saveVersion = async (assessmentId) => {
+	// Get current messages as snapshot
+	const { data: msgs } = await supabase.from("assessment_messages")
+		.select("*")
+		.eq("assessment_id", assessmentId)
+		.order("created_at");
+
+	if (!msgs || msgs.length === 0) return null;
+
+	// Find the latest report message (starts with "## ")
+	const reportMsg = [...msgs].reverse().find((m) => m.text && m.text.trim().startsWith("## "));
+	if (!reportMsg) return null;
+
+	// Get current version count
+	const { count } = await supabase.from("assessment_versions")
+		.select("*", { count: "exact", head: true })
+		.eq("assessment_id", assessmentId);
+
+	const versionNumber = (count || 0) + 1;
+
+	const { data: version, error } = await supabase.from("assessment_versions").insert({
+		assessment_id: assessmentId,
+		version_number: versionNumber,
+		report_content: reportMsg.text,
+		messages_snapshot: JSON.stringify(msgs),
+	}).select().single();
+
+	if (error) throw error;
+	return version;
+};
+
+const getVersions = async (assessmentId) => {
+	const { data, error } = await supabase.from("assessment_versions")
+		.select("id, version_number, report_content, created_at")
+		.eq("assessment_id", assessmentId)
+		.order("version_number", { ascending: false });
+
+	if (error) throw error;
+	return data || [];
+};
+
+const restoreVersion = async (assessmentId, versionId) => {
+	const { data: version } = await supabase.from("assessment_versions")
+		.select("*")
+		.eq("id", versionId)
+		.eq("assessment_id", assessmentId)
+		.single();
+
+	if (!version) throw new ApiError(httpStatus.NOT_FOUND, "Version not found");
+
+	// Save current state as a new version before restoring
+	await saveVersion(assessmentId);
+
+	// Restore: delete current messages, re-insert from snapshot
+	const snapshot = JSON.parse(version.messages_snapshot);
+	await supabase.from("assessment_messages").delete().eq("assessment_id", assessmentId);
+
+	const restored = snapshot.map((m) => ({
+		assessment_id: assessmentId,
+		text: m.text,
+		sender_id: m.sender_id,
+		pdf_path: m.pdf_path,
+		general_info: m.general_info,
+		survey_type: m.survey_type,
+		assessment_name: m.assessment_name,
+		check_type: m.check_type,
+	}));
+	await supabase.from("assessment_messages").insert(restored);
+
+	return { success: true, restored_version: version.version_number };
+};
+
 module.exports = {
 	createAssessment,
 	createSurvey,
@@ -241,4 +315,7 @@ module.exports = {
 	createCheckChat,
 	updateCheckChat,
 	inspireMe,
+	saveVersion,
+	getVersions,
+	restoreVersion,
 };
