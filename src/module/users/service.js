@@ -126,7 +126,7 @@ const forgotPassword = async (email) => {
 	const { error } = await supabase.from("users").update({ otp_key: OTP }).eq("id", user.id);
 	if (error) throw error;
 	sendForgotPasswordEmail(email, OTP);
-	return OTP;
+	return true;
 };
 
 const resetPassword = async (body) => {
@@ -135,7 +135,7 @@ const resetPassword = async (body) => {
 	if (!user) {
 		throw new ApiError(httpStatus.BAD_REQUEST, "No user found");
 	}
-	if (user.otp_key !== OTP) {
+	if (user.otp_key !== parseInt(OTP, 10)) {
 		throw new ApiError(httpStatus.BAD_REQUEST, "Invalid OTP");
 	}
 	const hashedPassword = await bcrypt.hash(newPassword, 8);
@@ -145,6 +145,24 @@ const resetPassword = async (body) => {
 	}).eq("id", user.id);
 	if (error) throw error;
 	return true;
+};
+
+const refreshAuth = async (refreshToken) => {
+	const tokenService = require("../tokens/service");
+	try {
+		const refreshTokenDoc = await tokenService.verifyToken(refreshToken, "refresh");
+		const user = await getUserById(refreshTokenDoc.user_id);
+		if (!user) {
+			throw new ApiError(httpStatus.UNAUTHORIZED, "User not found");
+		}
+		// Delete old refresh token
+		await supabase.from("tokens").delete().eq("id", refreshTokenDoc.id);
+		// Generate new token pair
+		const tokens = await tokenService.generateAuthTokens({ id: user._id || user.id });
+		return tokens;
+	} catch (error) {
+		throw new ApiError(httpStatus.UNAUTHORIZED, "Invalid refresh token");
+	}
 };
 
 const logout = async (data) => {
@@ -267,6 +285,7 @@ const sendVerificationEmailToUser = async (userId) => {
 module.exports = {
 	loginUserWithEmailAndPassword,
 	logout,
+	refreshAuth,
 	resetPassword,
 	changePassword,
 	updateUser,
