@@ -152,9 +152,42 @@ const sendWelcomeEmail = async (email, firstName) => {
   }
 };
 
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'imran@innovationworks.co.uk';
+
+const sendSupportNotification = async (userEmail, userName, userQuery, botReply) => {
+  const html = emailWrapper(`
+    <h2 style="margin:0 0 8px;font-size:20px;color:#111;">New Support Query</h2>
+    <div style="margin:16px 0;padding:16px;background:#f9fafb;border-radius:8px;border-left:4px solid #C3E11D;">
+      <p style="margin:0 0 4px;font-size:12px;color:#9ca3af;font-weight:600;">FROM</p>
+      <p style="margin:0 0 12px;font-size:14px;color:#111;">${userName} (${userEmail})</p>
+      <p style="margin:0 0 4px;font-size:12px;color:#9ca3af;font-weight:600;">USER QUESTION</p>
+      <p style="margin:0 0 12px;font-size:14px;color:#374151;">${userQuery}</p>
+      <p style="margin:0 0 4px;font-size:12px;color:#9ca3af;font-weight:600;">BOT RESPONSE</p>
+      <p style="margin:0;font-size:13px;color:#6b7280;">${botReply.substring(0, 500)}${botReply.length > 500 ? '...' : ''}</p>
+    </div>
+    <p style="color:#9ca3af;font-size:12px;">Reply directly to the user at ${userEmail} if follow-up is needed.</p>
+  `);
+
+  try {
+    const { data, error } = await resend.emails.send({
+      from: fromAddress,
+      to: ADMIN_EMAIL,
+      subject: `[ChangeAI Support] Query from ${userName}`,
+      text: `Support query from ${userName} (${userEmail}): ${userQuery}\n\nBot replied: ${botReply}`,
+      html,
+      reply_to: userEmail,
+    });
+    if (error) throw new Error(error.message);
+    logger.info(`Support notification sent to admin (id: ${data.id})`);
+  } catch (error) {
+    logger.error(`Failed to send support notification: ${error.message}`);
+  }
+};
+
 module.exports = {
   sendVerificationEmail,
   sendForgotPasswordEmail,
   sendInviteEmail,
   sendWelcomeEmail,
+  sendSupportNotification,
 };
