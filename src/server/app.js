@@ -21,6 +21,7 @@ const { workspaceRoutes } = require("../module/workSpaces/route");
 const { stripeRoutes } = require("../module/Subscription/route");
 const { feedbackRoutes } = require("../module/Feedback/route");
 const { workspaceAssessments } = require("../module/WorkspaceAssessments/route");
+const { supportRoutes } = require("../module/Support/route");
 require("../config/passport")(passport);
 
 const app = express();
@@ -72,6 +73,7 @@ app.use("/api/workspace", workspaceRoutes);
 app.use("/api/stripe", stripeRoutes);
 app.use("/api/feedback", feedbackRoutes);
 app.use("/api/workspace-assessment", workspaceAssessments);
+app.use("/api/support", supportRoutes);
 
 app.use((req, res, next) => {
 	next(new ApiError(httpStatus.NOT_FOUND, "API Not found"));
