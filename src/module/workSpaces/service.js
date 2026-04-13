@@ -212,6 +212,25 @@ const deleteFolder = async (workspaceId, folderId) => {
 
 // ─── Chat CRUD ───────────────────────────────────────────────────
 
+const getFolderChats = async (workspaceId, folderId) => {
+	const { data: folder } = await supabase
+		.from("folders")
+		.select("id")
+		.eq("id", folderId)
+		.eq("workspace_id", workspaceId)
+		.single();
+	if (!folder) throw new ApiError(httpStatus.BAD_REQUEST, "Workspace or Folder not found!");
+
+	const { data: chats, error } = await supabase
+		.from("folder_chats")
+		.select("*")
+		.eq("folder_id", folderId)
+		.eq("is_soft_deleted", false)
+		.order("created_at", { ascending: false });
+	if (error) throw error;
+	return chats || [];
+};
+
 const assistantChat = async (workspaceId, folderId) => {
 	try {
 		// Verify folder belongs to workspace
@@ -2658,6 +2677,7 @@ module.exports = {
 	updateFolder,
 	deleteFolder,
 	assistantChat,
+	getFolderChats,
 	getAssistantChat,
 	shareChat,
 	acceptChatInvite,

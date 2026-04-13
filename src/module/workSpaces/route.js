@@ -22,6 +22,7 @@ router
 
 router.get("/:workspaceId/folder/:folderId", auth(), controller.getFolderEntities);
 
+router.get("/:workspaceId/folder/:folderId/chat", auth(), controller.getFolderChats);
 router.post("/:workspaceId/folder/:folderId/chat", auth(), controller.assistantChat);
 
 router
