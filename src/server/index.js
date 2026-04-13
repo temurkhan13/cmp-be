@@ -2,6 +2,7 @@ const app = require("./app");
 const config = require("../config/config");
 const logger = require("../config/logger");
 const supabase = require("../config/supabase");
+const { syncPlansFromStripe } = require("../seeders/stripePlanSeeder");
 
 let server;
 
@@ -15,6 +16,9 @@ const startServer = async () => {
 		} else {
 			logger.info("Connected to Supabase");
 		}
+
+		// Seed Stripe plans into subscriptions table
+		syncPlansFromStripe().catch((e) => logger.warn("Plan sync skipped:", e.message));
 
 		server = app.listen(config.port, () => {
 			logger.info(`Listening to port ${config.port}`);

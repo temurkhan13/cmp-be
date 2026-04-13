@@ -143,6 +143,27 @@ const inspireMe = catchAsync(async (req, res) => {
   res.status(httpStatus.OK).send(chat);
 });
 
+const saveVersion = catchAsync(async (req, res) => {
+  const { id } = req.params;
+  const version = await service.saveVersion(id);
+  if (!version) {
+    return res.status(httpStatus.BAD_REQUEST).send({ message: 'No report found to save as version' });
+  }
+  res.status(httpStatus.CREATED).send(version);
+});
+
+const getVersions = catchAsync(async (req, res) => {
+  const { id } = req.params;
+  const versions = await service.getVersions(id);
+  res.status(httpStatus.OK).send(versions);
+});
+
+const restoreVersion = catchAsync(async (req, res) => {
+  const { id, versionId } = req.params;
+  const result = await service.restoreVersion(id, versionId);
+  res.status(httpStatus.OK).send(result);
+});
+
 module.exports = {
   createAssessment,
   createSurvey,
@@ -152,4 +173,7 @@ module.exports = {
   createCheckChat,
   updateCheckChat,
   inspireMe,
+  saveVersion,
+  getVersions,
+  restoreVersion,
 };
