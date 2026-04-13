@@ -3,11 +3,9 @@ const catchAsync = require("../../utils/catchAsync");
 const userService = require("./service");
 const tokenService = require("../tokens/service");
 const pick = require("../../utils/pick");
-const { sendForgotPasswordEmail } = require("../../utils/sendGridHelper");
 const config = require("../../config/config");
 const { getURLParams } = require("../../common/global.functions");
 const supabase = require("../../config/supabase");
-const { sendVerificationEmail } = require("../../utils/emailService");
 const ApiError = require("../../utils/ApiError");
 const workspaceService = require("../workSpaces/service");
 

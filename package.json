@@ -16,7 +16,6 @@
     "prepare": "echo 'skipping husky'"
   },
   "dependencies": {
-    "@sendgrid/mail": "^8.1.3",
     "@supabase/supabase-js": "^2.45.0",
     "axios": "^1.7.1",
     "bcryptjs": "^2.4.3",

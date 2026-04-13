@@ -20,8 +20,6 @@ const envVarsSchema = Joi.object()
 		STRIPE_WEBHOOK_SECRET: Joi.string().default("").description("Stripe webhook secret"),
 		NODE_MAILER_EMAIL: Joi.string().default(""),
 		NODE_MAILER_PASSWORD: Joi.string().default(""),
-		SENDGRID_TOKEN: Joi.string().default("").description("SendGrid token"),
-		SENDGRID_EMAIL_FROM: Joi.string().default("").description("SendGrid email"),
 		FRONTEND_URL: Joi.string().default("https://cmp-frontend-gamma.vercel.app").description("Frontend URL"),
 		FRONTEND_LOGIN_URL: Joi.string().default("https://cmp-frontend-gamma.vercel.app/log-in").description("Frontend login URL"),
 	})
@@ -57,10 +55,6 @@ module.exports = {
 		email: envVars.NODE_MAILER_EMAIL,
 		password: envVars.NODE_MAILER_PASSWORD,
 		verificationLink: envVars.EMAIL_VERIFICATION_LINK,
-	},
-	sendGrid: {
-		apiKey: envVars.SENDGRID_TOKEN,
-		email: envVars.SENDGRID_EMAIL_FROM,
 	},
 	frontendUrl: envVars.FRONTEND_URL,
 	frontendLoginUrl: envVars.FRONTEND_LOGIN_URL,
