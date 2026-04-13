@@ -115,8 +115,46 @@ const sendInviteEmail = async (email, inviteLink) => {
   }
 };
 
+const sendWelcomeEmail = async (email, firstName) => {
+  const name = firstName || 'there';
+  const html = emailWrapper(`
+    <h2 style="margin:0 0 8px;font-size:20px;color:#111;">Welcome to ChangeAI, ${name}!</h2>
+    <p style="color:#6b7280;font-size:14px;line-height:1.6;">
+      Your email has been verified and your account is ready. Here's what you can do:
+    </p>
+    <ul style="color:#374151;font-size:14px;line-height:2;padding-left:20px;">
+      <li><strong>AI Assistant</strong> — Chat about change management with contextual AI</li>
+      <li><strong>Assessments</strong> — Run ADKAR, stakeholder maps, readiness checks and more</li>
+      <li><strong>Digital Playbooks</strong> — Generate sitemaps and implementation plans</li>
+      <li><strong>Knowledge Base</strong> — Upload your documents to personalise the AI</li>
+    </ul>
+    <div style="margin:24px 0;text-align:center;">
+      <a href="https://cmp-frontend-gamma.vercel.app/dashboard" style="display:inline-block;background:#C3E11D;color:#0B1444;padding:12px 32px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px;">
+        Go to Dashboard
+      </a>
+    </div>
+    <p style="color:#9ca3af;font-size:12px;">Need help? Visit the Help Center in your dashboard or reply to this email.</p>
+  `);
+
+  try {
+    const { data, error } = await resend.emails.send({
+      from: fromAddress,
+      to: email,
+      subject: 'Welcome to ChangeAI — You\'re all set!',
+      text: `Welcome to ChangeAI, ${name}! Your email has been verified. Visit your dashboard: https://cmp-frontend-gamma.vercel.app/dashboard`,
+      html,
+    });
+    if (error) throw new Error(error.message);
+    logger.info(`Welcome email sent to ${email} (id: ${data.id})`);
+  } catch (error) {
+    logger.error(`Failed to send welcome email to ${email}: ${error.message}`);
+    // Non-blocking — don't throw, user is already verified
+  }
+};
+
 module.exports = {
   sendVerificationEmail,
   sendForgotPasswordEmail,
   sendInviteEmail,
+  sendWelcomeEmail,
 };
