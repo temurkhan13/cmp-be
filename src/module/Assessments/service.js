@@ -235,17 +235,19 @@ const inspireMe = async (message) => {
 // ── Assessment Versioning ─────────────────────────────────────────
 
 const saveVersion = async (assessmentId) => {
+	// Get report from assessment_reports table
+	const { data: report } = await supabase.from("assessment_reports")
+		.select("*")
+		.eq("assessment_id", assessmentId)
+		.single();
+
+	if (!report || !report.content) return null;
+
 	// Get current messages as snapshot
 	const { data: msgs } = await supabase.from("assessment_messages")
 		.select("*")
 		.eq("assessment_id", assessmentId)
 		.order("created_at");
-
-	if (!msgs || msgs.length === 0) return null;
-
-	// Find the latest report message (starts with "## ")
-	const reportMsg = [...msgs].reverse().find((m) => m.text && m.text.trim().startsWith("## "));
-	if (!reportMsg) return null;
 
 	// Get current version count
 	const { count } = await supabase.from("assessment_versions")
@@ -257,8 +259,8 @@ const saveVersion = async (assessmentId) => {
 	const { data: version, error } = await supabase.from("assessment_versions").insert({
 		assessment_id: assessmentId,
 		version_number: versionNumber,
-		report_content: reportMsg.text,
-		messages_snapshot: JSON.stringify(msgs),
+		report_content: report.content,
+		messages_snapshot: JSON.stringify(msgs || []),
 	}).select().single();
 
 	if (error) throw error;

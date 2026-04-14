@@ -85,11 +85,21 @@ const getFullPlaybook = async (playbookId) => {
 		.single();
 	if (error || !playbook) return null;
 
-	const { data: stages } = await supabase
+	let { data: stages, error: stagesError } = await supabase
 		.from("playbook_stages")
 		.select("*")
 		.eq("playbook_id", playbookId)
+		.order("sort_order", { ascending: true })
 		.order("created_at", { ascending: true });
+
+	// Fallback if sort_order column doesn't exist yet (migration not applied)
+	if (stagesError) {
+		({ data: stages } = await supabase
+			.from("playbook_stages")
+			.select("*")
+			.eq("playbook_id", playbookId)
+			.order("created_at", { ascending: true }));
+	}
 
 	playbook._id = playbook.id;
 	playbook.stages = (stages || []).map(s => ({ ...s, _id: s.id }));
@@ -777,19 +787,38 @@ const simpleUpdate = async (id, body) => {
 		.single();
 	if (!existing) throw new ApiError(httpStatus.BAD_REQUEST, "Sitemap not found");
 
+	// Handle stage reordering
+	if (body.stageOrder && Array.isArray(body.stageOrder)) {
+		try {
+			for (let i = 0; i < body.stageOrder.length; i++) {
+				await supabase
+					.from("playbook_stages")
+					.update({ sort_order: i })
+					.eq("id", body.stageOrder[i])
+					.eq("playbook_id", id);
+			}
+		} catch (e) {
+			// sort_order column may not exist yet — silently skip
+		}
+	}
+
+	// Handle playbook field updates
 	const updateFields = {};
 	if (body.name !== undefined) updateFields.name = body.name;
 	if (body.message !== undefined) updateFields.message = body.message;
 
-	const { data: updated, error } = await supabase
-		.from("digital_playbooks")
-		.update(updateFields)
-		.eq("id", id)
-		.select()
-		.single();
+	if (Object.keys(updateFields).length > 0) {
+		const { data: updated, error } = await supabase
+			.from("digital_playbooks")
+			.update(updateFields)
+			.eq("id", id)
+			.select()
+			.single();
+		if (error) throw new ApiError(httpStatus.BAD_REQUEST, error.message);
+		return updated;
+	}
 
-	if (error) throw new ApiError(httpStatus.BAD_REQUEST, error.message);
-	return updated;
+	return existing;
 };
 
 const addNode = async (playbookId, stageId, nodeBody) => {

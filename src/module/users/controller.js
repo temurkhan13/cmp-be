@@ -119,6 +119,23 @@ const sendVerificationEmailToUser = catchAsync(async (req, res) => {
 	res.send({ success: true });
 });
 
+const changePassword = catchAsync(async (req, res) => {
+	const { user } = req;
+	const { currentPassword, newPassword } = req.body;
+	await userService.changePassword({
+		email: user.email,
+		oldPassword: currentPassword,
+		newPassword,
+	});
+	res.send({ success: true, message: "Password updated successfully" });
+});
+
+const deleteAccount = catchAsync(async (req, res) => {
+	const { user } = req;
+	await userService.deleteUser(user._id || user.id);
+	res.status(httpStatus.OK).send({ success: true, message: "Account deleted successfully" });
+});
+
 module.exports = {
 	register,
 	login,
@@ -135,4 +152,6 @@ module.exports = {
 	getUserFromToken,
 	getUserSubscriptions,
 	sendVerificationEmailToUser,
+	changePassword,
+	deleteAccount,
 };
