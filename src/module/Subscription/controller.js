@@ -30,7 +30,7 @@ const createSubscription = catchAsync(async (req, res) => {
 	if (!addSubscription.status) {
 		return res.status(httpStatus.INTERNAL_SERVER_ERROR).send({ message: addSubscription.message });
 	}
-	res.status(httpStatus.OK).send({ sessionId: addSubscription.sessionId });
+	res.status(httpStatus.OK).send({ status: true, redirectToCheckoutURL: addSubscription.redirectToCheckoutURL });
 });
 const upgradeSubscription = catchAsync(async (req, res) => {
 	const { subscriptionId } = req.params;
@@ -78,6 +78,21 @@ const webhook = catchAsync(async (req, res) => {
 	res.json({ received: true });
 });
 
+const verifySession = catchAsync(async (req, res) => {
+	const { session_id } = req.body;
+	const { user } = req;
+
+	if (!session_id) {
+		return res.status(httpStatus.BAD_REQUEST).send({ message: "session_id is required" });
+	}
+
+	const result = await stripeService.verifySession(user._id, session_id);
+	if (!result.status) {
+		return res.status(httpStatus.BAD_REQUEST).send({ message: result.message });
+	}
+	res.status(httpStatus.OK).send({ status: true, message: result.message });
+});
+
 module.exports = {
 	getSubscriptions,
 	createSubscription,
@@ -86,4 +101,5 @@ module.exports = {
 	getInvoices,
 	resumeSubscription,
 	webhook,
+	verifySession,
 };
