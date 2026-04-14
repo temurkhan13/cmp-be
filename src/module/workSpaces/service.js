@@ -331,6 +331,7 @@ const getAssistantChat = async (workspaceId, folderId, chatId) => {
 		chat.generalMessages = (messages || []).map(m => ({
 			...m,
 			_id: m.id,
+			sender: m.from,
 			reactions: mapReactions(m.reactions),
 			comments: commentsByMessage[m.id] || [],
 		}));
@@ -1079,6 +1080,21 @@ const updateReplyInComment = async (workspaceId, folderId, chatId, messageId, co
 			.single();
 		if (error || !data) throw new ApiError(httpStatus.BAD_REQUEST, "Reply not found!");
 		return data;
+	} catch (error) {
+		if (error instanceof ApiError) throw error;
+		throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, error.message);
+	}
+};
+
+const deleteReplyFromComment = async (workspaceId, folderId, chatId, messageId, commentId, replyId) => {
+	try {
+		const { error } = await supabase
+			.from("folder_chat_comment_replies")
+			.delete()
+			.eq("id", replyId)
+			.eq("comment_id", commentId);
+		if (error) throw new ApiError(httpStatus.BAD_REQUEST, error.message);
+		return { success: true };
 	} catch (error) {
 		if (error instanceof ApiError) throw error;
 		throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, error.message);
@@ -2697,6 +2713,7 @@ module.exports = {
 	getBookmarksForUser,
 	addReplyToComment,
 	updateReplyInComment,
+	deleteReplyFromComment,
 	createAssessment,
 	updateAssessment,
 	getAssessment,
