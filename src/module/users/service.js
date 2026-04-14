@@ -271,6 +271,7 @@ const getUserSubscription = async (userId, subscriptionId) => {
 	}
 
 	return {
+		name: sub.name,
 		workspaces: { used: workspaceCount || 0, total: sub.workspaces },
 		projects: { used: folderCount, total: sub.projects },
 		sitemaps: { used: sitemapCount, total: sub.sitemaps },

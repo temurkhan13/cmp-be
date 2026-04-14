@@ -16,6 +16,7 @@ router
 	.delete(auth(), validate(validation.cancelSubscription), controller.cancelSubscription);
 router.get("/subscription/invoices", auth(), controller.getInvoices);
 router.post("/subscription/resume", auth(), controller.resumeSubscription);
+router.post("/subscription/verify-session", auth(), controller.verifySession);
 router.post("/webhook/endpoint", controller.webhook);
 
 module.exports = {

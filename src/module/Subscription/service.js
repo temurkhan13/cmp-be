@@ -20,9 +20,10 @@ const createSubscription = async (userId, subscriptionId) => {
 	const session = await stripe.checkout.sessions.create({
 		payment_method_types: ["card"],
 		mode: "subscription",
+		customer_email: user.email,
 		line_items: [{ price: subscription.stripe_price_id, quantity: 1 }],
 		success_url: `${config.frontendUrl}/success?session_id={CHECKOUT_SESSION_ID}`,
-		cancel_url: `${config.frontendUrl}/cancel`,
+		cancel_url: `${config.frontendUrl}/dashboard/PlanBilling`,
 	});
 
 	return { status: true, redirectToCheckoutURL: session.url };
@@ -178,6 +179,43 @@ const handleSubscriptionEvent = async (event) => {
 	logger.info(`Updated subscription for user: ${user.email}, Event: ${event.type}`);
 };
 
+const verifySession = async (userId, sessionId) => {
+	if (!stripe) return { status: false, message: "Stripe not configured" };
+
+	try {
+		const session = await stripe.checkout.sessions.retrieve(sessionId, {
+			expand: ["subscription"],
+		});
+
+		if (session.payment_status !== "paid") {
+			return { status: false, message: "Payment not completed" };
+		}
+
+		const subscription = session.subscription;
+		if (subscription) {
+			// Attach customer_email so handleSubscriptionEvent can find the user
+			if (!subscription.customer_email) {
+				subscription.customer_email = session.customer_details?.email || session.customer_email;
+			}
+			// If still no email, look up the user directly
+			if (!subscription.customer_email) {
+				const { data: user } = await supabase.from("users").select("email").eq("id", userId).single();
+				if (user) subscription.customer_email = user.email;
+			}
+
+			await handleSubscriptionEvent({
+				type: "customer.subscription.created",
+				data: { object: subscription },
+			});
+		}
+
+		return { status: true, message: "Subscription activated" };
+	} catch (error) {
+		logger.error("Error verifying checkout session:", error);
+		return { status: false, message: "Failed to verify payment session" };
+	}
+};
+
 module.exports = {
 	getSubscriptions,
 	createSubscription,
@@ -186,4 +224,5 @@ module.exports = {
 	getInvoices,
 	resumeSubscription,
 	webhook,
+	verifySession,
 };
