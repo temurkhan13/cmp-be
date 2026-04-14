@@ -1618,7 +1618,7 @@ const moveEntityToTrash = async (entityType, id) => {
 			return data;
 		},
 		assessment: async () => {
-			const { data } = await supabase.from("folder_assessments").update({ is_soft_deleted: true }).eq("id", id).select().single();
+			const { data } = await supabase.from("workspace_assessments").update({ is_soft_deleted: true }).eq("id", id).select().single();
 			return data;
 		},
 	};
@@ -1643,7 +1643,7 @@ const restoreEntityFromTrash = async (entityType, id) => {
 			return data;
 		}
 		case "assessment": {
-			const { data } = await supabase.from("folder_assessments").update({ is_soft_deleted: false }).eq("id", id).select().single();
+			const { data } = await supabase.from("workspace_assessments").update({ is_soft_deleted: false }).eq("id", id).select().single();
 			return data;
 		}
 		default:
@@ -1676,7 +1676,7 @@ const deleteEntityFromTrash = async (entityType, id) => {
 			return { success: true };
 		},
 		assessment: async () => {
-			await supabase.from("folder_assessments").delete().eq("id", id);
+			await supabase.from("workspace_assessments").delete().eq("id", id);
 			return { success: true };
 		},
 	};
@@ -1690,7 +1690,7 @@ const getUserTrash = async (userId) => {
 	// Get trashed workspaces
 	const { data: trashedWorkspaces } = await supabase
 		.from("workspaces")
-		.select("id, workspace_name, workspace_description")
+		.select("id, workspace_name, workspace_description, updated_at")
 		.eq("user_id", userId)
 		.eq("is_soft_deleted", true);
 
@@ -1705,7 +1705,7 @@ const getUserTrash = async (userId) => {
 	const { data: trashedFolders } = wsIds.length
 		? await supabase
 				.from("folders")
-				.select("id, folder_name")
+				.select("id, folder_name, updated_at")
 				.in("workspace_id", wsIds)
 				.eq("is_soft_deleted", true)
 		: { data: [] };
@@ -1723,7 +1723,7 @@ const getUserTrash = async (userId) => {
 	const { data: trashedChats } = folderIds.length
 		? await supabase
 				.from("folder_chats")
-				.select("id, chat_title")
+				.select("id, chat_title, updated_at")
 				.in("folder_id", folderIds)
 				.eq("is_soft_deleted", true)
 		: { data: [] };
@@ -1731,29 +1731,35 @@ const getUserTrash = async (userId) => {
 	// Get trashed assessments
 	const { data: trashedAssessments } = folderIds.length
 		? await supabase
-				.from("folder_assessments")
-				.select("id, name")
+				.from("workspace_assessments")
+				.select("id, name, updated_at")
 				.in("folder_id", folderIds)
 				.eq("is_soft_deleted", true)
 		: { data: [] };
+
+	const formatDate = (d) => d ? new Date(d).toLocaleDateString() : "Unknown Date";
 
 	return {
 		workspaces: (trashedWorkspaces || []).map((w) => ({
 			workspaceName: w.workspace_name,
 			workspaceDescription: w.workspace_description,
 			_id: w.id,
+			dateDeleted: formatDate(w.updated_at),
 		})),
 		folders: (trashedFolders || []).map((f) => ({
 			folderName: f.folder_name,
 			_id: f.id,
+			dateDeleted: formatDate(f.updated_at),
 		})),
 		chats: (trashedChats || []).map((c) => ({
 			chatTitle: c.chat_title,
 			_id: c.id,
+			dateDeleted: formatDate(c.updated_at),
 		})),
 		assessments: (trashedAssessments || []).map((a) => ({
 			assessmentTitle: a.name || "Assessment",
 			_id: a.id,
+			dateDeleted: formatDate(a.updated_at),
 		})),
 	};
 };
@@ -1814,9 +1820,7 @@ const getUserChats = async (userId, query) => {
 	}
 
 	const { data: folders } = await folderQuery;
-	if (!folders || folders.length === 0) {
-		throw new ApiError(httpStatus.NOT_FOUND, "No workspaces found for this user");
-	}
+	if (!folders || folders.length === 0) return [];
 
 	const folderIds = folders.map((f) => f.id);
 	const folderMap = {};
@@ -1876,7 +1880,7 @@ const getUserSitemaps = async (userId, query) => {
 	if (query.folderId) folderQuery = folderQuery.eq("id", query.folderId);
 
 	const { data: folders } = await folderQuery;
-	if (!folders || folders.length === 0) throw new ApiError(httpStatus.NOT_FOUND, "No workspaces found for this user");
+	if (!folders || folders.length === 0) return [];
 
 	const folderIds = folders.map((f) => f.id);
 	const folderMap = {};
@@ -1910,16 +1914,17 @@ const getUserAssessments = async (userId, query) => {
 	if (query.folderId) folderQuery = folderQuery.eq("id", query.folderId);
 
 	const { data: folders } = await folderQuery;
-	if (!folders || folders.length === 0) throw new ApiError(httpStatus.NOT_FOUND, "No workspaces found for this user");
+	if (!folders || folders.length === 0) return [];
 
 	const folderIds = folders.map((f) => f.id);
 	const folderMap = {};
 	folders.forEach((f) => { folderMap[f.id] = f; });
 
 	const { data: assessments } = await supabase
-		.from("folder_assessments")
+		.from("workspace_assessments")
 		.select("*")
-		.in("folder_id", folderIds);
+		.in("folder_id", folderIds)
+		.eq("is_soft_deleted", false);
 
 	return (assessments || []).map((a) => ({
 		workspaceId: folderMap[a.folder_id]?.workspace_id,
@@ -1941,7 +1946,7 @@ const getUserWireframes = async (userId, query) => {
 	if (query.folderId) folderQuery = folderQuery.eq("id", query.folderId);
 
 	const { data: folders } = await folderQuery;
-	if (!folders || folders.length === 0) throw new ApiError(httpStatus.NOT_FOUND, "No workspaces found for this user");
+	if (!folders || folders.length === 0) return [];
 
 	const folderIds = folders.map((f) => f.id);
 	const folderMap = {};
@@ -2542,7 +2547,7 @@ const getFolderEntities = async (workspaceId, folderId) => {
 
 	// Get latest 5 assessments (non-deleted)
 	const { data: assessments } = await supabase
-		.from("folder_assessments")
+		.from("workspace_assessments")
 		.select("id, name, created_at")
 		.eq("folder_id", folderId)
 		.eq("is_soft_deleted", false)

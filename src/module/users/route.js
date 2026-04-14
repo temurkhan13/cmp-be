@@ -34,6 +34,8 @@ router.get(
 );
 router.post("/get-user-from-token", auth(), controller.getUserFromToken);
 router.get("/user-subscription", auth(), controller.getUserSubscriptions);
+router.post("/change-password", auth(), validate(validation.changePassword), controller.changePassword);
+router.delete("/delete-account", auth(), controller.deleteAccount);
 
 module.exports = {
 	authRoutes: router,
