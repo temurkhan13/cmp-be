@@ -114,6 +114,11 @@ router.patch(
 	auth(),
 	controller.updateReplyInComment,
 );
+router.delete(
+	"/:workspaceId/folder/:folderId/chat/:chatId/message/:messageId/comment/:commentId/reply/:replyId",
+	auth(),
+	controller.deleteReplyFromComment,
+);
 router.post(
 	"/:workspaceId/folder/:folderId/assessment",
 	auth(),

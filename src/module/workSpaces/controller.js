@@ -254,6 +254,11 @@ const updateReplyInComment = catchAsync(async (req, res) => {
 	const reply = await service.updateReplyInComment(workspaceId, folderId, chatId, messageId, commentId, replyId, replyData);
 	res.status(httpStatus.OK).send(reply);
 });
+const deleteReplyFromComment = catchAsync(async (req, res) => {
+	const { workspaceId, folderId, chatId, messageId, commentId, replyId } = req.params;
+	const result = await service.deleteReplyFromComment(workspaceId, folderId, chatId, messageId, commentId, replyId);
+	res.status(httpStatus.OK).send(result);
+});
 const createAssessment = catchAsync(async (req, res) => {
 	const { workspaceId, folderId } = req.params;
 	const { user, body } = req;
@@ -584,6 +589,7 @@ module.exports = {
 	getBookmarksForChat,
 	addReplyToComment,
 	updateReplyInComment,
+	deleteReplyFromComment,
 	createAssessment,
 	updateAssessment,
 	getAssessment,
