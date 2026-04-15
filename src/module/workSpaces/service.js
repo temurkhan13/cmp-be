@@ -1657,7 +1657,14 @@ const moveEntityToTrash = async (entityType, id) => {
 			const { data } = await supabase.from("workspace_assessments").update({ is_soft_deleted: true }).eq("id", id).select().single();
 			return data;
 		},
+		sitemap: async () => {
+			const { data: sitemap } = await supabase.from("digital_playbooks").select("id").eq("id", id).single();
+			if (!sitemap) throw new ApiError(httpStatus.NOT_FOUND, "Sitemap not found");
+			const { data } = await supabase.from("digital_playbooks").update({ is_soft_deleted: true }).eq("id", id).select().single();
+			return data;
+		},
 	};
+	handlers.sitemaps = handlers.sitemap;
 
 	const handler = handlers[entityType];
 	if (!handler) throw new ApiError(httpStatus.BAD_REQUEST, "Invalid entity type");
@@ -1680,6 +1687,11 @@ const restoreEntityFromTrash = async (entityType, id) => {
 		}
 		case "assessment": {
 			const { data } = await supabase.from("workspace_assessments").update({ is_soft_deleted: false }).eq("id", id).select().single();
+			return data;
+		}
+		case "sitemap":
+		case "sitemaps": {
+			const { data } = await supabase.from("digital_playbooks").update({ is_soft_deleted: false }).eq("id", id).select().single();
 			return data;
 		}
 		default:
@@ -1715,7 +1727,38 @@ const deleteEntityFromTrash = async (entityType, id) => {
 			await supabase.from("workspace_assessments").delete().eq("id", id);
 			return { success: true };
 		},
+		sitemap: async () => {
+			const { data: playbook } = await supabase.from("digital_playbooks").select("id").eq("id", id).single();
+			if (!playbook) throw new ApiError(httpStatus.NOT_FOUND, "Sitemap not found");
+
+			// Cascade delete all child records
+			const { data: stages } = await supabase.from("playbook_stages").select("id").eq("playbook_id", id);
+			const stageIds = (stages || []).map((s) => s.id);
+
+			if (stageIds.length > 0) {
+				const { data: nodeDataRows } = await supabase.from("playbook_stage_node_data").select("id").in("stage_id", stageIds);
+				const nodeDataIds = (nodeDataRows || []).map((nd) => nd.id);
+
+				if (nodeDataIds.length > 0) {
+					const { data: comments } = await supabase.from("playbook_comments").select("id").in("node_data_id", nodeDataIds);
+					const commentIds = (comments || []).map((c) => c.id);
+
+					if (commentIds.length > 0) {
+						await supabase.from("playbook_comment_replies").delete().in("comment_id", commentIds);
+						await supabase.from("playbook_comments").delete().in("node_data_id", nodeDataIds);
+					}
+				}
+
+				await supabase.from("playbook_stage_node_data").delete().in("stage_id", stageIds);
+				await supabase.from("playbook_nodes").delete().in("stage_id", stageIds);
+				await supabase.from("playbook_stages").delete().eq("playbook_id", id);
+			}
+
+			await supabase.from("digital_playbooks").delete().eq("id", id);
+			return { success: true };
+		},
 	};
+	handlers.sitemaps = handlers.sitemap;
 
 	const handler = handlers[entityType];
 	if (!handler) throw new ApiError(httpStatus.BAD_REQUEST, "Invalid entity type");
@@ -1773,6 +1816,13 @@ const getUserTrash = async (userId) => {
 				.eq("is_soft_deleted", true)
 		: { data: [] };
 
+	// Get trashed sitemaps
+	const { data: trashedSitemaps } = await supabase
+		.from("digital_playbooks")
+		.select("id, name, updated_at")
+		.eq("user_id", userId)
+		.eq("is_soft_deleted", true);
+
 	const formatDate = (d) => d ? new Date(d).toLocaleDateString() : "Unknown Date";
 
 	return {
@@ -1796,6 +1846,11 @@ const getUserTrash = async (userId) => {
 			assessmentTitle: a.name || "Assessment",
 			_id: a.id,
 			dateDeleted: formatDate(a.updated_at),
+		})),
+		sitemaps: (trashedSitemaps || []).map((s) => ({
+			sitemapTitle: s.name || "Sitemap",
+			_id: s.id,
+			dateDeleted: formatDate(s.updated_at),
 		})),
 	};
 };
@@ -2035,7 +2090,8 @@ const getSitemaps = async (workspaceId, folderId) => {
 	const { data: sitemaps } = await supabase
 		.from("digital_playbooks")
 		.select("*")
-		.in("id", sitemapIds);
+		.in("id", sitemapIds)
+		.eq("is_soft_deleted", false);
 
 	return sitemaps || [];
 };
@@ -2048,6 +2104,7 @@ const getSitemap = async (workspaceId, folderId, sitemapId) => {
 		.from("digital_playbooks")
 		.select("*")
 		.eq("id", sitemapId)
+		.eq("is_soft_deleted", false)
 		.single();
 	if (!sitemap) throw new ApiError(httpStatus.BAD_REQUEST, "Sitemap not found!");
 	return sitemap;
