@@ -133,18 +133,23 @@ const assistantChatUpdate = catchAsync(async (req, res) => {
 	body.sender = user._id || user.id;
 	if (req.file) {
 		const fileType = req.file.mimetype.split("/")[0];
-		body.pdfPath = req.file.filename;
-		console.log("File uploaded:", req.file.originalname, "->", req.file.filename, "mimetype:", req.file.mimetype);
+		// Upload to Supabase Storage and get public URL
+		const publicUrl = await service.uploadChatAttachment(req.file);
+		body.pdfPath = publicUrl;
+		// Pass buffer + original name so the service can parse file content
+		body.fileBuffer = req.file.buffer;
+		body.fileOriginalName = req.file.originalname;
+		console.log("File uploaded to Supabase:", req.file.originalname, "->", publicUrl, "mimetype:", req.file.mimetype);
 		if (fileType === "image") {
-			body.media = [{ fileName: req.file.originalname, url: req.file.filename, timestamp: new Date() }];
+			body.media = [{ fileName: req.file.originalname, url: publicUrl, timestamp: new Date() }];
 		} else {
-			// PDF, DOCX, TXT, CSV, etc — all treated as documents
-			body.documents = [{ fileName: req.file.originalname, name: req.file.filename, date: new Date(), size: req.file.size }];
+			body.documents = [{ fileName: req.file.originalname, name: req.file.originalname, date: new Date(), size: req.file.size }];
 		}
 	} else {
 		console.log("No file in request. Body keys:", Object.keys(body));
 	}
 
+	console.log("assistantChatUpdate — pdfPath:", body.pdfPath, "hasFile:", !!req.file, "text:", (body.text || "").substring(0, 80));
 	const doc = await service.assistantChatUpdate(workspaceId, folderId, chatId, body);
 	res.status(httpStatus.CREATED).send(doc);
 });
