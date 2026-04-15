@@ -82,6 +82,7 @@ const getFullPlaybook = async (playbookId) => {
 		.from("digital_playbooks")
 		.select("*")
 		.eq("id", playbookId)
+		.eq("is_soft_deleted", false)
 		.single();
 	if (error || !playbook) return null;
 
@@ -262,7 +263,7 @@ const create = async (sitemapBody) => {
 };
 
 const querySitemaps = async (filter, options) => {
-	return await paginate("digital_playbooks", { ...options, filter }, supabase);
+	return await paginate("digital_playbooks", { ...options, filter: { ...filter, is_soft_deleted: false } }, supabase);
 };
 
 const getSitemap = async (id) => {
@@ -279,40 +280,13 @@ const deleteSitemap = async (id) => {
 		.single();
 	if (error || !playbook) throw new ApiError(httpStatus.BAD_REQUEST, "sitemap not found!");
 
-	// Child tables should cascade-delete via FK, but delete explicitly for safety
-	const { data: stages } = await supabase
-		.from("playbook_stages")
-		.select("id")
-		.eq("playbook_id", id);
-	const stageIds = (stages || []).map((s) => s.id);
+	// Soft-delete: mark as deleted so it appears in trash
+	await supabase
+		.from("digital_playbooks")
+		.update({ is_soft_deleted: true })
+		.eq("id", id);
 
-	if (stageIds.length > 0) {
-		const { data: nodeDataRows } = await supabase
-			.from("playbook_stage_node_data")
-			.select("id")
-			.in("stage_id", stageIds);
-		const nodeDataIds = (nodeDataRows || []).map((nd) => nd.id);
-
-		if (nodeDataIds.length > 0) {
-			const { data: comments } = await supabase
-				.from("playbook_comments")
-				.select("id")
-				.in("node_data_id", nodeDataIds);
-			const commentIds = (comments || []).map((c) => c.id);
-
-			if (commentIds.length > 0) {
-				await supabase.from("playbook_comment_replies").delete().in("comment_id", commentIds);
-				await supabase.from("playbook_comments").delete().in("node_data_id", nodeDataIds);
-			}
-		}
-
-		await supabase.from("playbook_stage_node_data").delete().in("stage_id", stageIds);
-		await supabase.from("playbook_nodes").delete().in("stage_id", stageIds);
-		await supabase.from("playbook_stages").delete().eq("playbook_id", id);
-	}
-
-	await supabase.from("digital_playbooks").delete().eq("id", id);
-	return { message: "Card remove successfully" };
+	return { message: "Sitemap moved to trash successfully" };
 };
 
 const updateSitemap = async (id, sitemapBody) => {
