@@ -484,6 +484,21 @@ const deleteAssistantChat = async (workspaceId, folderId, chatId) => {
 	}
 };
 
+const uploadChatAttachment = async (file) => {
+	const fileName = `${Date.now()}-${file.originalname}`;
+	const { error } = await supabase.storage
+		.from("chat-attachments")
+		.upload(fileName, file.buffer, {
+			contentType: file.mimetype,
+			upsert: true,
+		});
+	if (error) throw new ApiError(httpStatus.BAD_REQUEST, `File upload failed: ${error.message}`);
+	const { data: urlData } = supabase.storage
+		.from("chat-attachments")
+		.getPublicUrl(fileName);
+	return urlData.publicUrl;
+};
+
 const assistantChatUpdate = async (workspaceId, folderId, chatId, messageData) => {
 	try {
 		const { data: folder } = await supabase
@@ -540,10 +555,23 @@ const assistantChatUpdate = async (workspaceId, folderId, chatId, messageData) =
 					chat_id: newChat.id,
 					file_name: d.name || d.fileName,
 					name: d.name,
+					url: messageData.pdfPath || null,
 					date: d.date || null,
 					size: d.size || null,
 				}));
 				await supabase.from("folder_chat_documents").insert(docRows);
+			}
+			// Extract and store links from message text
+			if (messageData.text) {
+				const urlRegex = /https?:\/\/[^\s<>"')\]]+/gi;
+				const foundUrls = messageData.text.match(urlRegex);
+				if (foundUrls && foundUrls.length > 0) {
+					const linkRows = foundUrls.map((url) => {
+						try { return { chat_id: newChat.id, name: new URL(url).hostname, url }; }
+						catch { return { chat_id: newChat.id, name: url, url }; }
+					});
+					await supabase.from("folder_chat_links").insert(linkRows);
+				}
 			}
 
 			const body = {
@@ -611,55 +639,63 @@ const assistantChatUpdate = async (workspaceId, folderId, chatId, messageData) =
 				chat_id: chatId,
 				file_name: d.name || d.fileName,
 				name: d.name,
+				url: messageData.pdfPath || null,
 				date: d.date || null,
 				size: d.size || null,
 			}));
 			await supabase.from("folder_chat_documents").insert(docRows);
 		}
+		// Extract and store links from message text
+		if (messageData.text) {
+			const urlRegex = /https?:\/\/[^\s<>"')\]]+/gi;
+			const foundUrls = messageData.text.match(urlRegex);
+			console.log("Link extraction — text:", messageData.text.substring(0, 100), "found:", foundUrls);
+			if (foundUrls && foundUrls.length > 0) {
+				const linkRows = foundUrls.map((url) => {
+					try { return { chat_id: chatId, name: new URL(url).hostname, url }; }
+					catch { return { chat_id: chatId, name: url, url }; }
+				});
+				const { error: linkErr } = await supabase.from("folder_chat_links").insert(linkRows);
+				if (linkErr) console.log("Link insert error:", linkErr.message);
+				else console.log("Links inserted:", linkRows.length);
+			}
+		}
 
-		// Read uploaded file content directly from disk
+		// Read uploaded file content from buffer (Supabase Storage handles persistence)
 		let fileContent = "";
-		if (messageData.pdfPath) {
+		if (messageData.fileBuffer) {
 			try {
-				const fs = require("fs");
 				const pathMod = require("path");
-				const filePath = pathMod.join("public/uploads", messageData.pdfPath);
-				if (fs.existsSync(filePath)) {
-					const ext = pathMod.extname(messageData.pdfPath).toLowerCase();
-					if (ext === ".pdf") {
-						try {
-							const pdfParse = require("pdf-parse");
-							const dataBuffer = fs.readFileSync(filePath);
-							const pdfData = await pdfParse(dataBuffer);
-							fileContent = pdfData.text || "";
-							console.log("PDF parsed successfully:", fileContent.length, "chars");
-						} catch (pdfErr) {
-							console.log("PDF parse error:", pdfErr.message);
-						}
-					} else if (ext === ".docx") {
-						try {
-							const mammoth = require("mammoth");
-							const result = await mammoth.extractRawText({ path: filePath });
-							fileContent = result.value || "";
-						} catch (docxErr) {
-							console.log("DOCX parse error:", docxErr.message);
-						}
-					} else {
-						// txt, csv, etc — read as text
-						try {
-							fileContent = fs.readFileSync(filePath, "utf-8");
-						} catch (readErr) {
-							const buf = fs.readFileSync(filePath);
-							fileContent = buf.toString("utf-8").replace(/[^\x20-\x7E\n\r\t]/g, " ").trim();
-						}
+				const ext = pathMod.extname(messageData.fileOriginalName || "").toLowerCase();
+				if (ext === ".pdf") {
+					try {
+						const pdfParse = require("pdf-parse");
+						const pdfData = await pdfParse(messageData.fileBuffer);
+						fileContent = pdfData.text || "";
+						console.log("PDF parsed successfully:", fileContent.length, "chars");
+					} catch (pdfErr) {
+						console.log("PDF parse error:", pdfErr.message);
 					}
-					if (fileContent.length > 30000) {
-						fileContent = fileContent.substring(0, 30000) + "\n[...truncated...]";
+				} else if (ext === ".docx") {
+					try {
+						const mammoth = require("mammoth");
+						const result = await mammoth.extractRawText({ buffer: messageData.fileBuffer });
+						fileContent = result.value || "";
+					} catch (docxErr) {
+						console.log("DOCX parse error:", docxErr.message);
 					}
-					console.log(`File read: ${messageData.pdfPath} (${fileContent.length} chars)`);
 				} else {
-					console.log("File not found:", filePath);
+					// txt, csv, etc — read as text
+					try {
+						fileContent = messageData.fileBuffer.toString("utf-8");
+					} catch (readErr) {
+						fileContent = messageData.fileBuffer.toString("utf-8").replace(/[^\x20-\x7E\n\r\t]/g, " ").trim();
+					}
 				}
+				if (fileContent.length > 30000) {
+					fileContent = fileContent.substring(0, 30000) + "\n[...truncated...]";
+				}
+				console.log(`File read from buffer: ${messageData.fileOriginalName} (${fileContent.length} chars)`);
 			} catch (e) {
 				console.log("File read error:", e.message);
 			}
@@ -671,7 +707,7 @@ const assistantChatUpdate = async (workspaceId, folderId, chatId, messageData) =
 						user_id: String(messageData.sender),
 						workspace_id: "",
 						folder_id: "",
-						filename: messageData.pdfPath,
+						filename: messageData.fileOriginalName,
 						content: fileContent,
 					});
 				} catch (e) {
@@ -720,7 +756,7 @@ const assistantChatUpdate = async (workspaceId, folderId, chatId, messageData) =
 
 			if (result && (isMedia || isDocument)) {
 				const pdfPath = messageData?.media?.at(0) || messageData?.documents?.at(0);
-				pdfPath.url = `${config.rootPath}${pdfPath.name || pdfPath.url}`;
+				// url is already a full Supabase public URL from the controller
 				result.file = pdfPath;
 			}
 
@@ -2702,6 +2738,7 @@ module.exports = {
 	getAssistantChat,
 	shareChat,
 	acceptChatInvite,
+	uploadChatAttachment,
 	assistantChatUpdate,
 	updateMessageText,
 	deleteAssistantChat,
