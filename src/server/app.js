@@ -26,13 +26,6 @@ require("../config/passport")(passport);
 
 const app = express();
 
-// Ensure upload directory exists (Render ephemeral filesystem)
-const fs = require("fs");
-const uploadDir = "public/uploads";
-if (!fs.existsSync(uploadDir)) {
-	fs.mkdirSync(uploadDir, { recursive: true });
-	console.log("Created upload directory:", uploadDir);
-}
 
 if (config.env !== "test") {
 	app.use(morgan.successHandler);
