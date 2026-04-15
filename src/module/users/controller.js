@@ -47,8 +47,7 @@ const updateUser = catchAsync(async (req, res) => {
 	const { userId } = req.params;
 	const { body, file } = req;
 
-	if (file) body.photoPath = file.filename;
-	const result = await userService.updateUser(userId, body);
+	const result = await userService.updateUser(userId, body, file);
 	res.send(result);
 });
 

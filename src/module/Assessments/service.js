@@ -305,6 +305,11 @@ const restoreVersion = async (assessmentId, versionId) => {
 	}));
 	await supabase.from("assessment_messages").insert(restored);
 
+	// Restore report content
+	await supabase.from("assessment_reports")
+		.update({ content: version.report_content })
+		.eq("assessment_id", assessmentId);
+
 	return { success: true, restored_version: version.version_number };
 };
 

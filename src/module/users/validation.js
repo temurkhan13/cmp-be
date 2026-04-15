@@ -49,6 +49,7 @@ const updateUser = {
 		role: Joi.string(),
 		companyName: Joi.string(),
 		userName: Joi.string(),
+		photoPath: Joi.string().allow(''),
 	}),
 };
 

@@ -201,7 +201,22 @@ const changePassword = async (body) => {
 	return "Password Updated";
 };
 
-const updateUser = async (id, body) => {
+const uploadProfilePhoto = async (file) => {
+	const fileName = `${Date.now()}-${file.originalname}`;
+	const { data, error } = await supabase.storage
+		.from("avatars")
+		.upload(fileName, file.buffer, {
+			contentType: file.mimetype,
+			upsert: true,
+		});
+	if (error) throw new ApiError(httpStatus.BAD_REQUEST, `Photo upload failed: ${error.message}`);
+	const { data: urlData } = supabase.storage
+		.from("avatars")
+		.getPublicUrl(fileName);
+	return urlData.publicUrl;
+};
+
+const updateUser = async (id, body, file) => {
 	const user = await getUserById(id);
 	if (!user) {
 		throw new ApiError(httpStatus.NOT_FOUND, "User not found");
@@ -210,12 +225,17 @@ const updateUser = async (id, body) => {
 	if (body.firstName !== undefined) update.first_name = body.firstName;
 	if (body.lastName !== undefined) update.last_name = body.lastName;
 	if (body.companyName !== undefined) update.company_name = body.companyName;
-	if (body.photoPath !== undefined) update.photo_path = body.photoPath;
+	if (file) {
+		const publicUrl = await uploadProfilePhoto(file);
+		update.photo_path = publicUrl;
+	} else if (body.photoPath !== undefined) {
+		update.photo_path = body.photoPath;
+	}
 	if (body.email !== undefined) update.email = body.email;
 
 	const { data, error } = await supabase.from("users").update(update).eq("id", id).select().single();
 	if (error) throw error;
-	return data;
+	return formatUser(data);
 };
 
 const deleteUser = async (id) => {
