@@ -188,6 +188,14 @@ const create = async (sitemapBody) => {
 
 		if (insertError) throw new ApiError(httpStatus.BAD_REQUEST, insertError.message);
 
+		// Link playbook to folder if folderId is provided
+		if (sitemapBody.folderId) {
+			await supabase.from("folder_sitemap_references").insert({
+				folder_id: sitemapBody.folderId,
+				sitemap_id: playbook.id,
+			});
+		}
+
 		const initialBody = {
 			user_id: sitemapBody.userId,
 			chat_id: playbook.id,
