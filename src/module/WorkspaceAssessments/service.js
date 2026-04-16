@@ -133,7 +133,7 @@ const getWorkspaceAssessmentById = async (id) => {
 	if (!data) return null;
 
 	const { data: report } = await supabase.from("assessment_reports").select().eq("assessment_id", id).single();
-	const { data: qa } = await supabase.from("assessment_qa").select().eq("assessment_id", id).order("created_at");
+	const { data: qa } = await supabase.from("assessment_qa").select("*, reactions:assessment_message_reactions(*)").eq("assessment_id", id).order("created_at");
 	if (report) {
 		data.report = {
 			...report, _id: report.id,
@@ -147,10 +147,24 @@ const getWorkspaceAssessmentById = async (id) => {
 		data.report = null;
 	}
 	data.qa = (qa || []).map(q => ({ ...q, _id: q.id, assessmentId: q.assessment_id, askedAt: q.asked_at, answeredAt: q.answered_at }));
+
+	// Fetch bookmarks
+	const { data: bookmarks } = await supabase.from("assessment_bookmarks").select("*").eq("assessment_id", id);
+	data.bookmarks = (bookmarks || []).map(b => ({ ...b, _id: b.id, messageId: b.message_id, userId: b.user_id }));
 	data._id = data.id;
 	data.folderId = data.folder_id;
 	data.userId = data.user_id;
 	data.workspaceId = data.workspace_id;
+
+	// Fetch media, documents, and links
+	const { data: media } = await supabase.from("folder_assessment_media").select("*").eq("assessment_id", id).order("created_at");
+	const { data: documents } = await supabase.from("folder_assessment_documents").select("*").eq("assessment_id", id).order("created_at");
+	const { data: linkData } = await supabase.from("folder_assessment_links").select("*").eq("assessment_id", id).order("created_at");
+	const links = linkData || [];
+	data.media = (media || []).map(m => ({ ...m, _id: m.id, fileName: m.file_name }));
+	data.documents = (documents || []).map(d => ({ ...d, _id: d.id, fileName: d.file_name }));
+	data.links = links.map(l => ({ ...l, _id: l.id }));
+
 	return data;
 };
 
@@ -224,6 +238,11 @@ const deleteWorkspaceAssessmentById = async (id) => {
 		await removeStorageFile(existing.report.storage_path);
 	}
 
+	// Clean up media, documents, and links (no FK cascade since constraint was dropped)
+	await supabase.from("folder_assessment_media").delete().eq("assessment_id", id);
+	await supabase.from("folder_assessment_documents").delete().eq("assessment_id", id);
+	await supabase.from("folder_assessment_links").delete().eq("assessment_id", id);
+
 	await supabase.from("workspace_assessments").delete().eq("id", id);
 };
 
@@ -247,9 +266,29 @@ const updateAssessmentAnswer = async (workspaceAssessmentId, body) => {
 	if (!question) return handleStatus(false, "Question not found");
 	if (question.status !== "pending") return handleStatus(false, "Question already answered");
 
+	// Parse file content if a file was uploaded (for AI context)
+	let answerForAI = answer || "";
+	if (body.fileBuffer) {
+		let fileText = "";
+		const ext = (body.fileOriginalName || "").split(".").pop().toLowerCase();
+		try {
+			if (ext === "pdf") {
+				const pdfParse = require("pdf-parse");
+				fileText = (await pdfParse(body.fileBuffer)).text || "";
+			} else if (ext === "docx") {
+				const mammoth = require("mammoth");
+				fileText = (await mammoth.extractRawText({ buffer: body.fileBuffer })).value || "";
+			} else {
+				fileText = body.fileBuffer.toString("utf-8");
+			}
+			if (fileText.length > 30000) fileText = fileText.substring(0, 30000) + "\n[...truncated...]";
+		} catch (e) { console.error("Assessment file parse error:", e.message); }
+		if (fileText) answerForAI = `${answerForAI}\n\n[Attached Document Content]:\n${fileText}`;
+	}
+
 	// Build history BEFORE marking answered (include this answer in history for AI)
 	const { data: qaHistory } = await supabase.from("assessment_qa").select().eq("assessment_id", workspaceAssessmentId).order("created_at");
-	const history = ["", ...(qaHistory || []).flatMap((q) => [q.question, q.answer || ""]), answer];
+	const history = ["", ...(qaHistory || []).flatMap((q) => [q.question, q.answer || ""]), answerForAI];
 
 	// Fetch business info for AI context
 	const { data: bizInfo } = await supabase.from("folder_business_info").select("*").eq("folder_id", assessment.folder_id).maybeSingle();
@@ -288,7 +327,7 @@ const updateAssessmentAnswer = async (workspaceAssessmentId, body) => {
 	}
 
 	const aiPayload = {
-		userId: assessment.user_id, chat_id: assessment.folder_id, message: answer || "",
+		userId: assessment.user_id, chat_id: assessment.folder_id, message: answerForAI,
 		history, general_info: priorAssessmentContext, business_info: businessInfoStr, assessment_name: assessment.name,
 	};
 
@@ -303,6 +342,37 @@ const updateAssessmentAnswer = async (workspaceAssessmentId, body) => {
 	await supabase.from("assessment_qa").update({
 		answer, status: "answered", answered_at: new Date(),
 	}).eq("id", questionId);
+
+	// Store media/document records if file was uploaded
+	if (body.media && body.media.length > 0) {
+		const mediaRows = body.media.map((m) => ({
+			assessment_id: workspaceAssessmentId,
+			file_name: m.fileName, url: m.url,
+		}));
+		await supabase.from("folder_assessment_media").insert(mediaRows);
+	}
+	if (body.documents && body.documents.length > 0) {
+		const docRows = body.documents.map((d) => ({
+			assessment_id: workspaceAssessmentId,
+			file_name: d.fileName, name: d.name,
+			url: body.fileUrl || null,
+			date: d.date || null, size: d.size ? String(d.size) : null,
+		}));
+		await supabase.from("folder_assessment_documents").insert(docRows);
+	}
+
+	// Extract and store links from answer text
+	if (answer) {
+		const urlRegex = /https?:\/\/[^\s<>"')\]]+/gi;
+		const foundUrls = (answer || "").match(urlRegex);
+		if (foundUrls && foundUrls.length > 0) {
+			const linkRows = foundUrls.map((url) => {
+				try { return { assessment_id: workspaceAssessmentId, name: new URL(url).hostname, url }; }
+				catch { return { assessment_id: workspaceAssessmentId, name: url, url }; }
+			});
+			await supabase.from("folder_assessment_links").insert(linkRows);
+		}
+	}
 
 	// RAG: ingest the Q&A pair (best-effort)
 	ingestToRAG(

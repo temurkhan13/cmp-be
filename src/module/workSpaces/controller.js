@@ -237,8 +237,8 @@ const getBookmarksForUser = catchAsync(async (req, res) => {
 });
 const getBookmarksForChat = catchAsync(async (req, res) => {
 	const userId = req.user._id;
-	const { workspaceId, folderId, chatId } = req.params;
-	const bookmarks = await service.getBookmarksForChat(userId, workspaceId, folderId, chatId);
+	const { workspaceId, folderId, contextType, contextId } = req.params;
+	const bookmarks = await service.getBookmarksForChat(userId, workspaceId, folderId, contextId, contextType);
 	res.status(httpStatus.OK).send(bookmarks);
 });
 const addReplyToComment = catchAsync(async (req, res) => {
@@ -540,15 +540,15 @@ const getFolderEntities = catchAsync(async (req, res) => {
 	res.status(httpStatus.OK).send(entities);
 });
 const toggleMessageLike = catchAsync(async (req, res) => {
-	const { workspaceId, folderId, chatId, messageId } = req.params;
+	const { workspaceId, folderId, contextType, contextId, messageId } = req.params;
 	const { user } = req;
-	const like = await service.toggleMessageLike(workspaceId, folderId, chatId, messageId, user._id);
+	const like = await service.toggleMessageLike(workspaceId, folderId, contextId, messageId, user._id, contextType);
 	res.status(httpStatus.OK).send(like);
 });
 const toggleMessageDislike = catchAsync(async (req, res) => {
-	const { workspaceId, folderId, chatId, messageId } = req.params;
+	const { workspaceId, folderId, contextType, contextId, messageId } = req.params;
 	const { user } = req;
-	const dislike = await service.toggleMessageDislike(workspaceId, folderId, chatId, messageId, user._id);
+	const dislike = await service.toggleMessageDislike(workspaceId, folderId, contextId, messageId, user._id, contextType);
 	res.status(httpStatus.OK).send(dislike);
 });
 const moveChatToFolderOfSameWorkspace = catchAsync(async (req, res) => {
