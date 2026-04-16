@@ -1982,14 +1982,16 @@ const getUserSitemaps = async (userId, query) => {
 		.select("*, sitemap:sitemap_id(*)")
 		.in("folder_id", folderIds);
 
-	return (refs || []).map((r) => ({
-		workspaceId: folderMap[r.folder_id]?.workspace_id,
-		folderId: r.folder_id,
-		...r.sitemap,
-		_id: r.sitemap?.id,
-		updatedAt: r.sitemap?.updated_at,
-		createdAt: r.sitemap?.created_at,
-	}));
+	return (refs || [])
+		.filter((r) => r.sitemap && r.sitemap.is_soft_deleted === false)
+		.map((r) => ({
+			workspaceId: folderMap[r.folder_id]?.workspace_id,
+			folderId: r.folder_id,
+			...r.sitemap,
+			_id: r.sitemap?.id,
+			updatedAt: r.sitemap?.updated_at,
+			createdAt: r.sitemap?.created_at,
+		}));
 };
 
 const getUserAssessments = async (userId, query) => {
@@ -2669,7 +2671,8 @@ const getFolderEntities = async (workspaceId, folderId) => {
 		const { data: sitemapData } = await supabase
 			.from("digital_playbooks")
 			.select("id, name, created_at")
-			.in("id", sitemapIds);
+			.in("id", sitemapIds)
+			.eq("is_soft_deleted", false);
 		sitemaps = (sitemapData || []).map((s) => ({ id: s.id, name: s.name, createdAt: s.created_at }));
 	}
 
