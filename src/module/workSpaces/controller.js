@@ -93,31 +93,28 @@ const extractFileText = catchAsync(async (req, res) => {
 	if (!req.file) {
 		return res.status(400).json({ text: "", error: "No file uploaded" });
 	}
-	const fs = require("fs");
 	const pathMod = require("path");
-	const filePath = pathMod.join("public/uploads", req.file.filename);
 	let text = "";
 
 	try {
 		const ext = pathMod.extname(req.file.originalname).toLowerCase();
+		const buf = req.file.buffer;
+
 		if (ext === ".pdf") {
 			const pdfParse = require("pdf-parse");
-			const buf = fs.readFileSync(filePath);
 			const data = await pdfParse(buf);
 			text = data.text || "";
 		} else if (ext === ".docx") {
 			const mammoth = require("mammoth");
-			const result = await mammoth.extractRawText({ path: filePath });
+			const result = await mammoth.extractRawText({ buffer: buf });
 			text = result.value || "";
 		} else {
-			text = fs.readFileSync(filePath, "utf-8");
+			text = buf.toString("utf-8");
 		}
 	} catch (e) {
 		console.error("Extract text error:", e.message);
+		return res.status(422).json({ text: "", error: "Failed to extract text from file" });
 	}
-
-	// Clean up uploaded file
-	try { fs.unlinkSync(filePath); } catch (e) { /* ignore */ }
 
 	if (text.length > 30000) {
 		text = text.substring(0, 30000) + "\n[...truncated...]";
