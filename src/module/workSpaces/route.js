@@ -80,12 +80,12 @@ router
 	.delete(auth(), controller.deleteComment);
 
 router.post(
-	"/:workspaceId/folder/:folderId/chat/:chatId/message/:messageId/toggle-like",
+	"/:workspaceId/folder/:folderId/:contextType/:contextId/message/:messageId/toggle-like",
 	auth(),
 	controller.toggleMessageLike,
 );
 router.post(
-	"/:workspaceId/folder/:folderId/chat/:chatId/message/:messageId/toggle-dislike",
+	"/:workspaceId/folder/:folderId/:contextType/:contextId/message/:messageId/toggle-dislike",
 	auth(),
 	controller.toggleMessageDislike,
 );
@@ -102,7 +102,7 @@ router.delete(
 );
 router.get("/user/bookmarks", auth(), controller.getBookmarksForUser);
 router.get("/user/comments", auth(), controller.getCommentsForUser);
-router.get("/:workspaceId/folder/:folderId/chat/:chatId/bookmarks", auth(), controller.getBookmarksForChat);
+router.get("/:workspaceId/folder/:folderId/:contextType/:contextId/bookmarks", auth(), controller.getBookmarksForChat);
 
 router.post(
 	"/:workspaceId/folder/:folderId/chat/:chatId/message/:messageId/comment/:commentId/reply",

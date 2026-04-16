@@ -45,9 +45,27 @@ const deleteWorkspaceAssessment = catchAsync(async (req, res) => {
 	res.status(httpStatus.NO_CONTENT).send();
 });
 const updateAssessmentAnswer = catchAsync(async (req, res) => {
+	const { body } = req;
+
+	if (req.file) {
+		const workspaceService = require("../workSpaces/service");
+		const publicUrl = await workspaceService.uploadChatAttachment(req.file);
+		const fileType = req.file.mimetype.split("/")[0];
+
+		body.fileUrl = publicUrl;
+		body.fileBuffer = req.file.buffer;
+		body.fileOriginalName = req.file.originalname;
+
+		if (fileType === "image") {
+			body.media = [{ fileName: req.file.originalname, url: publicUrl }];
+		} else {
+			body.documents = [{ fileName: req.file.originalname, name: req.file.originalname, url: publicUrl, date: new Date(), size: req.file.size }];
+		}
+	}
+
 	const workspaceAssessment = await workspaceAssessmentService.updateAssessmentAnswer(
 		req.params.workspaceAssessmentId,
-		req.body,
+		body,
 	);
 
 	if (!workspaceAssessment) {

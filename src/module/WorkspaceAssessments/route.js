@@ -4,6 +4,7 @@ const validation = require("./validation");
 const validate = require("../../middlewares/validate");
 const auth = require("../../middlewares/auth");
 const { pdfHeaderMiddleware } = require("../../middlewares/pdfHeaderMiddleware");
+const { fileUpload } = require("../../utils/fileUpload");
 
 const router = express.Router();
 
@@ -20,6 +21,7 @@ router
 router.patch(
 	"/:workspaceAssessmentId/answer",
 	auth(),
+	fileUpload.single("file"),
 	validate(validation.updateAssessmentAnswer),
 	controller.updateAssessmentAnswer,
 );

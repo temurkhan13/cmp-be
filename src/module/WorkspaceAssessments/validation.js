@@ -43,8 +43,8 @@ const updateAssessmentAnswer = {
 	}),
 	body: Joi.object().keys({
 		questionId: Joi.string().custom(objectId),
-		answer: Joi.string(),
-	}),
+		answer: Joi.string().allow(""),
+	}).unknown(true),
 };
 const updateAssessmentReport = {
 	params: Joi.object().keys({

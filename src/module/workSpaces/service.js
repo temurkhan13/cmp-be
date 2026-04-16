@@ -1001,11 +1001,9 @@ const bookmarkMessage = async (workspaceId, folderId, contextId, messageId, user
 			if (error) throw new ApiError(httpStatus.BAD_REQUEST, error.message);
 			return data;
 		} else if (contextType === "assessment") {
-			// Assessment bookmarks use the assessment bookmark table if it exists,
-			// otherwise fall back to a generic pattern
 			const { data, error } = await supabase
-				.from("folder_chat_bookmarks")
-				.insert({ chat_id: contextId, user_id: userId, message_id: messageId })
+				.from("assessment_bookmarks")
+				.insert({ assessment_id: contextId, user_id: userId, message_id: messageId })
 				.select()
 				.single();
 			if (error) throw new ApiError(httpStatus.BAD_REQUEST, error.message);
@@ -1020,14 +1018,16 @@ const bookmarkMessage = async (workspaceId, folderId, contextId, messageId, user
 
 const unbookmarkMessage = async (workspaceId, folderId, contextId, messageId, bookmarkId, contextType) => {
 	try {
+		const table = contextType === "assessment" ? "assessment_bookmarks" : "folder_chat_bookmarks";
+
 		const { data } = await supabase
-			.from("folder_chat_bookmarks")
+			.from(table)
 			.select("*")
 			.eq("id", bookmarkId)
 			.single();
 		if (!data) throw new ApiError(httpStatus.BAD_REQUEST, "Bookmark not found!");
 
-		await supabase.from("folder_chat_bookmarks").delete().eq("id", bookmarkId);
+		await supabase.from(table).delete().eq("id", bookmarkId);
 		return data;
 	} catch (error) {
 		if (error instanceof ApiError) throw error;
@@ -1037,7 +1037,8 @@ const unbookmarkMessage = async (workspaceId, folderId, contextId, messageId, bo
 
 const getBookmarksForUser = async (userId) => {
 	try {
-		const { data: bookmarks } = await supabase
+		// Fetch chat bookmarks
+		const { data: chatBookmarks } = await supabase
 			.from("folder_chat_bookmarks")
 			.select(`
 				*,
@@ -1048,31 +1049,72 @@ const getBookmarksForUser = async (userId) => {
 			`)
 			.eq("user_id", userId);
 
-		return (bookmarks || []).map((b) => ({
+		const chatResults = (chatBookmarks || []).map((b) => ({
 			workspaceId: b.chat?.folder?.workspace_id,
 			folderId: b.chat?.folder_id,
 			chatId: b.chat_id,
 			messageId: b.message_id,
+			contextType: "chat",
 			bookmark: b,
 		}));
+
+		// Fetch assessment bookmarks
+		const { data: assessmentBookmarks } = await supabase
+			.from("assessment_bookmarks")
+			.select(`
+				*,
+				assessment:workspace_assessments(
+					id, folder_id, workspace_id
+				)
+			`)
+			.eq("user_id", userId);
+
+		const assessmentResults = (assessmentBookmarks || []).map((b) => ({
+			workspaceId: b.assessment?.workspace_id,
+			folderId: b.assessment?.folder_id,
+			assessmentId: b.assessment_id,
+			messageId: b.message_id,
+			contextType: "assessment",
+			bookmark: b,
+		}));
+
+		return [...chatResults, ...assessmentResults];
 	} catch (error) {
 		throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, error.message);
 	}
 };
 
-const getBookmarksForChat = async (userId, workspaceId, folderId, chatId) => {
+const getBookmarksForChat = async (userId, workspaceId, folderId, contextId, contextType) => {
 	try {
+		if (contextType === "assessment") {
+			const { data: bookmarks } = await supabase
+				.from("assessment_bookmarks")
+				.select("*")
+				.eq("assessment_id", contextId)
+				.eq("user_id", userId);
+
+			return (bookmarks || []).map((b) => ({
+				workspaceId,
+				folderId,
+				assessmentId: contextId,
+				messageId: b.message_id,
+				contextType: "assessment",
+				bookmark: b,
+			}));
+		}
+
 		const { data: bookmarks } = await supabase
 			.from("folder_chat_bookmarks")
 			.select("*")
-			.eq("chat_id", chatId)
+			.eq("chat_id", contextId)
 			.eq("user_id", userId);
 
 		return (bookmarks || []).map((b) => ({
 			workspaceId,
 			folderId,
-			chatId,
+			chatId: contextId,
 			messageId: b.message_id,
+			contextType: "chat",
 			bookmark: b,
 		}));
 	} catch (error) {
@@ -1420,6 +1462,11 @@ const deleteAssessment = async (workspaceId, folderId, assessmentId) => {
 		if (!assessment) throw new ApiError(httpStatus.BAD_REQUEST, "Assessment not found!");
 
 		if (assessment.is_soft_deleted) {
+			// Clean up media, documents, and links (no FK cascade since constraint was dropped)
+			await supabase.from("folder_assessment_media").delete().eq("assessment_id", assessmentId);
+			await supabase.from("folder_assessment_documents").delete().eq("assessment_id", assessmentId);
+			await supabase.from("folder_assessment_links").delete().eq("assessment_id", assessmentId);
+
 			await supabase.from("folder_assessments").delete().eq("id", assessmentId);
 			return { success: true, message: "Assessment permanently deleted" };
 		} else {
@@ -2688,10 +2735,14 @@ const getFolderEntities = async (workspaceId, folderId) => {
 
 // ─── Message Reactions (Like / Dislike) ──────────────────────────
 
-const toggleMessageLike = async (workspaceId, folderId, chatId, messageId, userId) => {
+const toggleMessageLike = async (workspaceId, folderId, contextId, messageId, userId, contextType) => {
+	const reactionsTable = contextType === "assessment" ? "assessment_message_reactions" : "chat_message_reactions";
+	const messagesTable = contextType === "assessment" ? "assessment_qa" : "folder_chat_messages";
+	const reactionsJoin = contextType === "assessment" ? "reactions:assessment_message_reactions(*)" : "reactions:chat_message_reactions(*)";
+
 	// Check for existing reaction
 	const { data: existing } = await supabase
-		.from("chat_message_reactions")
+		.from(reactionsTable)
 		.select("id, type")
 		.eq("message_id", messageId)
 		.eq("user_id", userId)
@@ -2699,15 +2750,12 @@ const toggleMessageLike = async (workspaceId, folderId, chatId, messageId, userI
 
 	if (existing) {
 		if (existing.type === "like") {
-			// Remove reaction
-			await supabase.from("chat_message_reactions").delete().eq("id", existing.id);
+			await supabase.from(reactionsTable).delete().eq("id", existing.id);
 		} else {
-			// Change to like
-			await supabase.from("chat_message_reactions").update({ type: "like" }).eq("id", existing.id);
+			await supabase.from(reactionsTable).update({ type: "like" }).eq("id", existing.id);
 		}
 	} else {
-		// Insert new like
-		await supabase.from("chat_message_reactions").insert({
+		await supabase.from(reactionsTable).insert({
 			message_id: messageId,
 			user_id: userId,
 			type: "like",
@@ -2716,17 +2764,21 @@ const toggleMessageLike = async (workspaceId, folderId, chatId, messageId, userI
 
 	// Get message with updated reactions
 	const { data: message } = await supabase
-		.from("folder_chat_messages")
-		.select("*, reactions:chat_message_reactions(*)")
+		.from(messagesTable)
+		.select(`*, ${reactionsJoin}`)
 		.eq("id", messageId)
 		.single();
 
 	return { success: true, message: "Reaction updated", data: message };
 };
 
-const toggleMessageDislike = async (workspaceId, folderId, chatId, messageId, userId) => {
+const toggleMessageDislike = async (workspaceId, folderId, contextId, messageId, userId, contextType) => {
+	const reactionsTable = contextType === "assessment" ? "assessment_message_reactions" : "chat_message_reactions";
+	const messagesTable = contextType === "assessment" ? "assessment_qa" : "folder_chat_messages";
+	const reactionsJoin = contextType === "assessment" ? "reactions:assessment_message_reactions(*)" : "reactions:chat_message_reactions(*)";
+
 	const { data: existing } = await supabase
-		.from("chat_message_reactions")
+		.from(reactionsTable)
 		.select("id, type")
 		.eq("message_id", messageId)
 		.eq("user_id", userId)
@@ -2734,12 +2786,12 @@ const toggleMessageDislike = async (workspaceId, folderId, chatId, messageId, us
 
 	if (existing) {
 		if (existing.type === "dislike") {
-			await supabase.from("chat_message_reactions").delete().eq("id", existing.id);
+			await supabase.from(reactionsTable).delete().eq("id", existing.id);
 		} else {
-			await supabase.from("chat_message_reactions").update({ type: "dislike" }).eq("id", existing.id);
+			await supabase.from(reactionsTable).update({ type: "dislike" }).eq("id", existing.id);
 		}
 	} else {
-		await supabase.from("chat_message_reactions").insert({
+		await supabase.from(reactionsTable).insert({
 			message_id: messageId,
 			user_id: userId,
 			type: "dislike",
@@ -2747,8 +2799,8 @@ const toggleMessageDislike = async (workspaceId, folderId, chatId, messageId, us
 	}
 
 	const { data: message } = await supabase
-		.from("folder_chat_messages")
-		.select("*, reactions:chat_message_reactions(*)")
+		.from(messagesTable)
+		.select(`*, ${reactionsJoin}`)
 		.eq("id", messageId)
 		.single();
 
