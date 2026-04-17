@@ -92,7 +92,9 @@ const downloadAssessmentReport = catchAsync(async (req, res) => {
 		throw new ApiError(httpStatus.NOT_FOUND, workspaceAssessment.message);
 	}
 
-	res.redirect(workspaceAssessment.data.downloadUrl);
+	res.setHeader("Content-Type", "application/pdf");
+	res.setHeader("Content-Disposition", `attachment; filename="${workspaceAssessment.data.fileName}"`);
+	res.send(workspaceAssessment.data.buffer);
 });
 
 module.exports = {

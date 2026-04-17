@@ -4,7 +4,7 @@ const logger = require("../../config/logger.js");
 const supabase = require("../../config/supabase");
 const paginate = require("../../utils/paginate");
 const axios = require("axios");
-const { generateAndConvertMarkdownToPDF, removeStorageFile, generateSafePdfFilename } = require("./helper.js");
+const { generateSafePdfFilename } = require("./helper.js");
 
 // RAG ingest helper — best-effort, never blocks the main flow
 const ingestToRAG = async (userId, folderId, filename, content) => {
@@ -53,11 +53,10 @@ const createWorkspaceAssessment = async (body) => {
 			if (aiResponse.status && aiResponse.data?.message) {
 				const aiData = aiResponse.data;
 				if (isMarkdownDetected(aiData.message)) {
-					const pdf = await generateAndConvertMarkdownToPDF(aiData.message);
 					await supabase.from("assessment_reports").insert({
 						assessment_id: existing.id, is_generated: true,
 						title: aiData.title || "Report Title", content: aiData.message,
-						url: pdf.publicUrl, storage_path: pdf.storagePath, generated_at: new Date(),
+						generated_at: new Date(),
 					});
 					await supabase.from("workspace_assessments").update({ status: "completed" }).eq("id", existing.id);
 					ingestToRAG(userId, folderId, `assessment-report-${existing.id}`, `Assessment Report: ${name}\n\n${aiData.message}`);
@@ -101,11 +100,10 @@ const createWorkspaceAssessment = async (body) => {
 	const shouldGenerateReport = isMarkdownDetected(aiData.message);
 
 	if (shouldGenerateReport) {
-		const pdf = await generateAndConvertMarkdownToPDF(aiData.message);
 		await supabase.from("assessment_reports").insert({
 			assessment_id: assessment.id, is_generated: true,
 			title: aiData.title || "Report Title", content: aiData.message,
-			url: pdf.publicUrl, storage_path: pdf.storagePath, generated_at: new Date(),
+			generated_at: new Date(),
 		});
 		await supabase.from("workspace_assessments").update({ status: "completed" }).eq("id", assessment.id);
 		ingestToRAG(userId, folderId, `assessment-report-${assessment.id}`, `Assessment Report: ${name}\n\n${aiData.message}`);
@@ -196,11 +194,10 @@ const recoverZombieIfNeeded = async (assessment) => {
 		}
 		const aiData = aiResponse.data;
 		if (isMarkdownDetected(aiData.message)) {
-			const pdf = await generateAndConvertMarkdownToPDF(aiData.message);
 			await supabase.from("assessment_reports").insert({
 				assessment_id: assessment.id, is_generated: true,
 				title: aiData.title || "Report Title", content: aiData.message,
-				url: pdf.publicUrl, storage_path: pdf.storagePath, generated_at: new Date(),
+				generated_at: new Date(),
 			});
 			await supabase.from("workspace_assessments").update({ status: "completed" }).eq("id", assessment.id);
 		} else {
@@ -233,10 +230,6 @@ const updateWorkspaceAssessmentById = async (id, body) => {
 const deleteWorkspaceAssessmentById = async (id) => {
 	const existing = await getWorkspaceAssessmentById(id);
 	if (!existing) return handleStatus(false, "Workspace assessment not found");
-
-	if (existing.report?.storage_path) {
-		await removeStorageFile(existing.report.storage_path);
-	}
 
 	// Clean up media, documents, and links (no FK cascade since constraint was dropped)
 	await supabase.from("folder_assessment_media").delete().eq("assessment_id", id);
@@ -382,16 +375,10 @@ const updateAssessmentAnswer = async (workspaceAssessmentId, body) => {
 	);
 
 	if (isMarkdownDetected(aiData.message)) {
-		const pdf = await generateAndConvertMarkdownToPDF(aiData.message);
-
-		if (assessment.report?.storage_path) {
-			await removeStorageFile(assessment.report.storage_path);
-		}
-
 		await supabase.from("assessment_reports").upsert({
 			assessment_id: workspaceAssessmentId, is_generated: true,
 			title: aiData.title || "Report Title", content: aiData.message,
-			url: pdf.publicUrl, storage_path: pdf.storagePath, generated_at: new Date(),
+			generated_at: new Date(),
 		});
 		await supabase.from("workspace_assessments").update({ status: "completed" }).eq("id", workspaceAssessmentId);
 
@@ -420,15 +407,7 @@ const updateAssessmentReport = async (workspaceAssessmentId, body) => {
 	if (title) update.title = title;
 
 	if (content) {
-		const pdf = await generateAndConvertMarkdownToPDF(content);
-		if (pdf) {
-			if (assessment.report?.storage_path) {
-				await removeStorageFile(assessment.report.storage_path);
-			}
-			update.url = pdf.publicUrl;
-			update.storage_path = pdf.storagePath;
-			update.content = content;
-		}
+		update.content = content;
 	}
 
 	const { data: report } = await supabase.from("assessment_reports").update(update).eq("assessment_id", workspaceAssessmentId).select().single();
@@ -440,12 +419,13 @@ const updateAssessmentReport = async (workspaceAssessmentId, body) => {
 const downloadAssessmentReport = async (workspaceAssessmentId) => {
 	const assessment = await getWorkspaceAssessmentById(workspaceAssessmentId);
 	if (!assessment) return handleStatus(false, "Workspace assessment not found!");
-	if (!assessment.report?.url) return handleStatus(false, "Report not found!");
+	if (!assessment.report?.content) return handleStatus(false, "Report not found!");
 
+	const { convertMarkdownToPDF } = require("../../utils/markdownToPDF");
+	const buffer = await convertMarkdownToPDF(assessment.report.content);
 	const fileName = generateSafePdfFilename(assessment.report.title || "assessment-report");
-	if (!fileName) return handleStatus(false, "Error generating file name");
 
-	return { status: true, data: { fileName, downloadUrl: assessment.report.url } };
+	return { status: true, data: { fileName, buffer } };
 };
 
 module.exports = {

@@ -15,11 +15,6 @@ const exportDocument = catchAsync(async (req, res) => {
 
 	const result = await exportService.generate({ type, source, sourceId, options });
 
-	// Assessment PDF fast-path: redirect to pre-generated URL
-	if (result.redirectUrl) {
-		return res.redirect(result.redirectUrl);
-	}
-
 	const contentType = CONTENT_TYPES[type];
 	if (!contentType) {
 		throw new ApiError(httpStatus.BAD_REQUEST, `Unsupported export type: ${type}`);

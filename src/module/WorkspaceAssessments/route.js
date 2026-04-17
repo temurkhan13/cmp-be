@@ -3,7 +3,6 @@ const controller = require("./controller");
 const validation = require("./validation");
 const validate = require("../../middlewares/validate");
 const auth = require("../../middlewares/auth");
-const { pdfHeaderMiddleware } = require("../../middlewares/pdfHeaderMiddleware");
 const { fileUpload } = require("../../utils/fileUpload");
 
 const router = express.Router();
@@ -33,7 +32,7 @@ router.patch(
 );
 router.get(
 	"/:workspaceAssessmentId/report/download",
-	[auth(), pdfHeaderMiddleware],
+	auth(),
 	validate(validation.downloadAssessmentReport),
 	controller.downloadAssessmentReport,
 );
