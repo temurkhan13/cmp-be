@@ -3,15 +3,89 @@ const MarkdownIt = require("markdown-it");
 
 const md = new MarkdownIt();
 
+// ── Brand constants ─────────────────────────────────────────────
+const BRAND = {
+	primary: [0, 49, 111],       // #00316F — dark navy
+	accent: [195, 225, 29],      // #C3E11D — lime green
+	textDark: [33, 33, 33],      // #212121
+	textMedium: [85, 85, 85],    // #555555
+	textLight: [136, 136, 136],  // #888888
+	bgLight: [245, 247, 250],    // #F5F7FA — code/quote background
+	border: [220, 220, 220],     // #DCDCDC
+	white: [255, 255, 255],
+	tableBorder: [200, 200, 200],
+	tableHeaderBg: [0, 49, 111],
+	tableStripeBg: [245, 247, 250],
+};
+
+const FONTS = {
+	regular: "Helvetica",
+	bold: "Helvetica-Bold",
+	italic: "Helvetica-Oblique",
+	boldItalic: "Helvetica-BoldOblique",
+	mono: "Courier",
+};
+
+const PAGE = {
+	marginTop: 60,
+	marginBottom: 60,
+	marginLeft: 55,
+	marginRight: 55,
+};
+
 /**
- * Convert markdown to PDF and return a Buffer (no disk I/O).
+ * Strip ALL characters outside Latin-1 (U+00FF) that Helvetica cannot render.
+ * This catches every emoji, CJK char, symbol, etc. in one sweep.
+ */
+const sanitizeText = (text) => {
+	if (!text) return "";
+	return text
+		// HTML entities FIRST (before stripping non-Latin chars)
+		.replace(/&amp;/g, "&")
+		.replace(/&lt;/g, "<")
+		.replace(/&gt;/g, ">")
+		.replace(/&quot;/g, '"')
+		.replace(/&#39;/g, "'")
+		.replace(/&nbsp;/g, " ")
+		// Strip everything outside Latin-1 — Helvetica cannot render it
+		.replace(/[^\x00-\xFF]/g, "")
+		// Clean up leftover whitespace from removed chars
+		.replace(/\s{2,}/g, " ");
+};
+
+/**
+ * Strip HTML tags, decode entities, sanitize for Helvetica.
+ */
+const cleanInline = (html) => {
+	if (!html) return "";
+	return sanitizeText(
+		html
+			.replace(/<br\s*\/?>/g, " ")
+			.replace(/<[^>]*>/g, "")
+	).trim();
+};
+
+/**
+ * Convert markdown to a professionally formatted PDF and return a Buffer.
  * @param {string} markdown
+ * @param {object} [opts] - Optional: { title, coverPage }
  * @returns {Promise<Buffer>}
  */
-const convertMarkdownToPDF = (markdown) => {
+const convertMarkdownToPDF = (markdown, opts = {}) => {
 	return new Promise((resolve, reject) => {
 		const doc = new PDFDocument({
-			margins: { top: 50, bottom: 50, left: 50, right: 50 },
+			margins: {
+				top: PAGE.marginTop,
+				bottom: PAGE.marginBottom,
+				left: PAGE.marginLeft,
+				right: PAGE.marginRight,
+			},
+			size: "A4",
+			bufferPages: true,
+			info: {
+				Title: opts.title || "Export",
+				Creator: "ChangeAI",
+			},
 		});
 
 		const chunks = [];
@@ -19,232 +93,454 @@ const convertMarkdownToPDF = (markdown) => {
 		doc.on("end", () => resolve(Buffer.concat(chunks)));
 		doc.on("error", reject);
 
-		const styles = {
-			h1: { fontSize: 24, font: "Helvetica-Bold", spacing: 1 },
-			h2: { fontSize: 22, font: "Helvetica-Bold", spacing: 1 },
-			h3: { fontSize: 20, font: "Helvetica-Bold", spacing: 1 },
-			h4: { fontSize: 16, font: "Helvetica-Bold", spacing: 1 },
-			h5: { fontSize: 14, font: "Helvetica-Bold", spacing: 1 },
-			h6: { fontSize: 12, font: "Helvetica-Bold", spacing: 1 },
-			p: { fontSize: 12, font: "Helvetica", spacing: 1 },
-			strong: { font: "Helvetica-Bold" },
-			em: { font: "Helvetica-Oblique" },
-			code: { font: "Courier", fontSize: 11 },
-			li: { fontSize: 12, indent: 20, spacing: 0.8 },
-			sup: { fontSize: 8, rise: 8 },
-			sub: { fontSize: 8, rise: -4 },
-			strike: { strikethrough: true },
-			u: { underline: true },
+		const pageWidth = doc.page.width - PAGE.marginLeft - PAGE.marginRight;
+
+		// ── Helper: Draw accent line ──
+		const drawAccentLine = (y, width = 60) => {
+			doc.save()
+				.moveTo((doc.page.width - width) / 2, y)
+				.lineTo((doc.page.width + width) / 2, y)
+				.lineWidth(2.5)
+				.strokeColor(BRAND.accent)
+				.stroke()
+				.restore();
 		};
 
-		const processInlineTags = (text) => {
-			let currentFont = styles.p.font;
-			let currentSize = styles.p.fontSize;
-			let formatting = {
-				underline: false,
-				strike: false,
-				link: false,
-			};
-
-			text = text.replace(/<(strong|b)>(.*?)<\/(?:strong|b)>/g, (_, tag, content) => {
-				currentFont = styles.strong.font;
-				doc.font(currentFont);
-				return content;
-			});
-
-			text = text.replace(/<(em|i)>(.*?)<\/(?:em|i)>/g, (_, tag, content) => {
-				currentFont = styles.em.font;
-				doc.font(currentFont);
-				return content;
-			});
-
-			text = text.replace(/<u>(.*?)<\/u>/g, (_, content) => {
-				formatting.underline = true;
-				return content;
-			});
-
-			text = text.replace(/<(strike|s|del)>(.*?)<\/(?:strike|s|del)>/g, (_, tag, content) => {
-				formatting.strike = true;
-				return content;
-			});
-
-			text = text.replace(/<sup>(.*?)<\/sup>/g, (_, content) => {
-				currentSize = styles.sup.fontSize;
-				doc.fontSize(currentSize);
-				return content;
-			});
-
-			text = text.replace(/<sub>(.*?)<\/sub>/g, (_, content) => {
-				currentSize = styles.sub.fontSize;
-				doc.fontSize(currentSize);
-				return content;
-			});
-
-			text = text.replace(/<mark>(.*?)<\/mark>/g, (_, content) => {
-				return content;
-			});
-
-			text = text.replace(/<a[^>]*href="([^"]*)"[^>]*>(.*?)<\/a>/g, (_, href, content) => {
-				formatting.link = true;
-				return content + ` (${href})`;
-			});
-
-			return { text, formatting };
+		// ── Helper: Draw section divider ──
+		const drawDivider = () => {
+			const y = doc.y + 6;
+			doc.save()
+				.moveTo(PAGE.marginLeft, y)
+				.lineTo(doc.page.width - PAGE.marginRight, y)
+				.lineWidth(0.5)
+				.strokeColor(BRAND.border)
+				.stroke()
+				.restore();
+			doc.y = y + 10;
 		};
 
-		const htmlContent = md.render(markdown).split("\n");
-		let inBlockquote = false;
+		// ── Helper: Check page space, add page if needed ──
+		const ensureSpace = (needed) => {
+			if (doc.y + needed > doc.page.height - PAGE.marginBottom - 20) {
+				doc.addPage();
+			}
+		};
+
+		// ── Cover Page (optional) ──
+		if (opts.coverPage !== false) {
+			const title = sanitizeText(opts.title || "Document Export");
+			doc.fontSize(11)
+				.font(FONTS.regular)
+				.fillColor(BRAND.textLight)
+				.text("POWERED BY", 0, 200, { align: "center", width: doc.page.width });
+
+			doc.fontSize(14)
+				.font(FONTS.bold)
+				.fillColor(BRAND.primary)
+				.text("ChangeAI", 0, 218, { align: "center", width: doc.page.width });
+
+			drawAccentLine(250, 80);
+
+			doc.fontSize(28)
+				.font(FONTS.bold)
+				.fillColor(BRAND.primary)
+				.text(title, PAGE.marginLeft, 280, {
+					align: "center",
+					width: pageWidth,
+					lineGap: 4,
+				});
+
+			const dateStr = new Date().toLocaleDateString("en-US", {
+				year: "numeric", month: "long", day: "numeric",
+			});
+			doc.fontSize(10)
+				.font(FONTS.regular)
+				.fillColor(BRAND.textLight)
+				.text(dateStr, 0, 360, { align: "center", width: doc.page.width });
+
+			doc.addPage();
+		}
+
+		// ── Parse markdown to HTML lines ──
+		const htmlContent = md.render(markdown);
+		const lines = htmlContent.split("\n");
+
 		let inCodeBlock = false;
+		let codeLines = [];
+		let inBlockquote = false;
+		let blockquoteLines = [];
 		let inTable = false;
 		let tableHeaders = [];
-		let tableAlignments = [];
+		let tableRows = [];
+		let orderedListIndex = 0;
+		let inOrderedList = false;
+		let listDepth = 0;
 
-		htmlContent.forEach((line) => {
-			line = line.trim();
-			if (!line) return;
-			if (line.startsWith("<h1>")) {
-				doc
-					.font(styles.h1.font)
-					.fontSize(styles.h1.fontSize)
-					.text(line.replace(/<\/?h1>/g, "").trim(), {
-						align: "center",
-						underline: true,
+		const renderCodeBlock = () => {
+			if (codeLines.length === 0) return;
+			const code = codeLines.join("\n");
+			const lineHeight = 13;
+			const blockHeight = codeLines.length * lineHeight + 20;
+			ensureSpace(blockHeight);
+
+			const bgY = doc.y - 4;
+			doc.save()
+				.roundedRect(PAGE.marginLeft, bgY, pageWidth, blockHeight, 4)
+				.fill(BRAND.bgLight);
+			doc.restore();
+
+			doc.font(FONTS.mono)
+				.fontSize(9)
+				.fillColor(BRAND.textDark)
+				.text(code, PAGE.marginLeft + 12, bgY + 10, {
+					width: pageWidth - 24,
+					lineGap: 3,
+				});
+
+			doc.y = bgY + blockHeight + 8;
+			codeLines = [];
+		};
+
+		const renderBlockquote = () => {
+			if (blockquoteLines.length === 0) return;
+			const text = blockquoteLines.join(" ").trim();
+			const textHeight = doc.heightOfString(text, {
+				width: pageWidth - 30,
+				fontSize: 11,
+			});
+			const blockHeight = textHeight + 16;
+			ensureSpace(blockHeight);
+
+			const bgY = doc.y;
+			doc.save()
+				.rect(PAGE.marginLeft, bgY, 3, blockHeight)
+				.fill(BRAND.accent);
+			doc.restore();
+			doc.save()
+				.rect(PAGE.marginLeft + 3, bgY, pageWidth - 3, blockHeight)
+				.fill(BRAND.bgLight);
+			doc.restore();
+
+			doc.font(FONTS.italic)
+				.fontSize(11)
+				.fillColor(BRAND.textMedium)
+				.text(text, PAGE.marginLeft + 16, bgY + 8, { width: pageWidth - 30 });
+
+			doc.y = bgY + blockHeight + 8;
+			blockquoteLines = [];
+		};
+
+		const renderTable = () => {
+			if (tableHeaders.length === 0) return;
+			const colCount = tableHeaders.length;
+			const colWidth = pageWidth / colCount;
+			const cellPad = 6;
+			const rowHeight = 22;
+
+			ensureSpace((tableRows.length + 1) * rowHeight + 10);
+
+			let y = doc.y;
+
+			// Header row
+			doc.save()
+				.rect(PAGE.marginLeft, y, pageWidth, rowHeight)
+				.fill(BRAND.tableHeaderBg);
+			doc.restore();
+			tableHeaders.forEach((header, i) => {
+				doc.font(FONTS.bold)
+					.fontSize(9)
+					.fillColor(BRAND.white)
+					.text(sanitizeText(header), PAGE.marginLeft + i * colWidth + cellPad, y + 6, {
+						width: colWidth - cellPad * 2,
+						align: "left",
 					});
-				doc.moveDown(styles.h1.spacing);
-			} else if (line.startsWith("<h2>")) {
-				doc
-					.font(styles.h2.font)
-					.fontSize(styles.h2.fontSize)
-					.text(line.replace(/<\/?h2>/g, "").trim());
-				doc.moveDown(styles.h2.spacing);
-			} else if (line.startsWith("<h3>")) {
-				doc
-					.font(styles.h3.font)
-					.fontSize(styles.h3.fontSize)
-					.text(line.replace(/<\/?h3>/g, "").trim());
-				doc.moveDown(styles.h3.spacing);
-			} else if (line.startsWith("<h4>")) {
-				doc
-					.font(styles.h4.font)
-					.fontSize(styles.h4.fontSize)
-					.text(line.replace(/<\/?h4>/g, "").trim());
-				doc.moveDown(styles.h4.spacing);
-			} else if (line.startsWith("<p>")) {
-				const cleanLine = line.replace(/<\/?p>/g, "").trim();
-				const { text, formatting } = processInlineTags(cleanLine);
+			});
+			y += rowHeight;
 
-				doc.font(styles.p.font).fontSize(styles.p.fontSize).text(text, {
-					align: "justify",
-					lineGap: 2,
-					underline: formatting.underline,
-					strike: formatting.strike,
-					link: formatting.link,
+			// Data rows
+			tableRows.forEach((row, rowIdx) => {
+				if (rowIdx % 2 === 0) {
+					doc.save()
+						.rect(PAGE.marginLeft, y, pageWidth, rowHeight)
+						.fill(BRAND.tableStripeBg);
+					doc.restore();
+				}
+				row.forEach((cell, i) => {
+					doc.font(FONTS.regular)
+						.fontSize(9)
+						.fillColor(BRAND.textDark)
+						.text(sanitizeText(cell), PAGE.marginLeft + i * colWidth + cellPad, y + 6, {
+							width: colWidth - cellPad * 2,
+							align: "left",
+						});
 				});
-				doc.moveDown(styles.p.spacing);
-			} else if (line.startsWith("<div>")) {
-				const cleanLine = line.replace(/<\/?div>/g, "").trim();
-				const { text, formatting } = processInlineTags(cleanLine);
+				y += rowHeight;
+			});
 
-				doc.font(styles.p.font).fontSize(styles.p.fontSize).text(text, {
-					align: "left",
-					lineGap: 2,
-					underline: formatting.underline,
-					strike: formatting.strike,
-				});
-				doc.moveDown(0.5);
-			} else if (line.startsWith("<blockquote>")) {
-				inBlockquote = true;
-				doc.fontSize(styles.p.fontSize).font(styles.em.font);
-			} else if (line.startsWith("</blockquote>")) {
-				inBlockquote = false;
-				doc.moveDown(1);
-			} else if (line.startsWith("<pre><code>")) {
+			// Table border
+			doc.save()
+				.rect(PAGE.marginLeft, doc.y, pageWidth, y - doc.y)
+				.lineWidth(0.5)
+				.strokeColor(BRAND.tableBorder)
+				.stroke();
+			doc.restore();
+
+			doc.y = y + 10;
+			tableHeaders = [];
+			tableRows = [];
+		};
+
+		// ── Process each HTML line ──
+		lines.forEach((rawLine) => {
+			const line = rawLine.trim();
+			if (!line) return;
+
+			// ── Code blocks ──
+			if (line.startsWith("<pre><code") || line === "<pre>") {
 				inCodeBlock = true;
-				doc.font(styles.code.font).fontSize(styles.code.fontSize);
-			} else if (line.startsWith("</code></pre>")) {
-				inCodeBlock = false;
-				doc.moveDown(1);
-			} else if (line.startsWith("<table>")) {
+				codeLines = [];
+				const inner = line.replace(/<pre><code[^>]*>/, "").replace(/<\/code><\/pre>/, "");
+				if (inner.trim()) codeLines.push(inner.replace(/<[^>]*>/g, ""));
+				if (line.includes("</code></pre>")) {
+					inCodeBlock = false;
+					renderCodeBlock();
+				}
+				return;
+			}
+			if (inCodeBlock) {
+				if (line.includes("</code></pre>") || line === "</pre>") {
+					const inner = line.replace(/<\/code><\/pre>/, "").replace(/<\/pre>/, "");
+					if (inner.trim()) codeLines.push(inner.replace(/<[^>]*>/g, ""));
+					inCodeBlock = false;
+					renderCodeBlock();
+				} else {
+					codeLines.push(line.replace(/<[^>]*>/g, ""));
+				}
+				return;
+			}
+
+			// ── Blockquotes ──
+			if (line.startsWith("<blockquote>")) {
+				inBlockquote = true;
+				blockquoteLines = [];
+				const inner = line.replace(/<\/?blockquote>/g, "").replace(/<\/?p>/g, "").trim();
+				if (inner) blockquoteLines.push(cleanInline(inner));
+				if (line.includes("</blockquote>")) {
+					inBlockquote = false;
+					renderBlockquote();
+				}
+				return;
+			}
+			if (inBlockquote) {
+				if (line.includes("</blockquote>")) {
+					const inner = line.replace(/<\/blockquote>/, "").replace(/<\/?p>/g, "").trim();
+					if (inner) blockquoteLines.push(cleanInline(inner));
+					inBlockquote = false;
+					renderBlockquote();
+				} else {
+					const inner = line.replace(/<\/?p>/g, "").trim();
+					if (inner) blockquoteLines.push(cleanInline(inner));
+				}
+				return;
+			}
+
+			// ── Tables ──
+			if (line.startsWith("<table>")) {
 				inTable = true;
 				tableHeaders = [];
-				tableAlignments = [];
-			} else if (line.startsWith("<tr><th>")) {
-				tableHeaders = line
-					.replace(/<\/?tr>/g, "")
-					.replace(/<\/?th>/g, "|")
-					.split("|")
-					.filter((header) => header.trim())
-					.map((header) => header.trim());
-			} else if (line.startsWith("<tr><td>")) {
-				const cells = line
-					.replace(/<\/?tr>/g, "")
-					.replace(/<\/?td>/g, "|")
-					.split("|")
-					.filter((cell) => cell.trim())
-					.map((cell) => cell.trim());
-
-				const columnWidth = 400 / cells.length;
-				let xPos = 50;
-
-				cells.forEach((cell, index) => {
-					const { text, formatting } = processInlineTags(cell);
-					doc.font(styles.p.font).fontSize(styles.p.fontSize).text(text, xPos, doc.y, {
-						width: columnWidth,
-						align: "left",
-					});
-					xPos += columnWidth;
-				});
-
-				doc.moveDown(0.5);
-			} else if (line.startsWith("</table>")) {
+				tableRows = [];
+				return;
+			}
+			if (line === "</table>") {
 				inTable = false;
-				doc.moveDown(1);
-			} else if (line.startsWith("<ul>") || line.startsWith("<ol>")) {
-				doc.moveDown(0.5);
-			} else if (line.startsWith("<li>")) {
-				const cleanLine = line.replace(/<li>|<\/li>/g, "").trim();
-				const { text, formatting } = processInlineTags(cleanLine);
+				renderTable();
+				return;
+			}
+			if (inTable) {
+				if (line.includes("<th>")) {
+					tableHeaders = line
+						.replace(/<\/?tr>/g, "").replace(/<\/?thead>/g, "")
+						.split(/<\/?th>/).filter((s) => s.trim() && !s.match(/^<\/?/))
+						.map((s) => s.replace(/<[^>]*>/g, "").trim());
+				} else if (line.includes("<td>")) {
+					const cells = line
+						.replace(/<\/?tr>/g, "").replace(/<\/?tbody>/g, "")
+						.split(/<\/?td>/).filter((s) => s.trim() && !s.match(/^<\/?/))
+						.map((s) => s.replace(/<[^>]*>/g, "").trim());
+					if (cells.length) tableRows.push(cells);
+				}
+				return;
+			}
 
-				doc
-					.font(styles.p.font)
-					.fontSize(styles.li.fontSize)
-					.text("• " + text, {
-						indent: styles.li.indent,
+			// ── Headings ──
+			if (line.startsWith("<h1>") || line.startsWith("<h1 ")) {
+				const text = cleanInline(line.replace(/<\/?h1[^>]*>/g, ""));
+				ensureSpace(50);
+				drawDivider();
+				doc.font(FONTS.bold).fontSize(26).fillColor(BRAND.primary)
+					.text(text, { align: "left" });
+				doc.moveDown(0.6);
+				return;
+			}
+			if (line.startsWith("<h2>") || line.startsWith("<h2 ")) {
+				const text = cleanInline(line.replace(/<\/?h2[^>]*>/g, ""));
+				ensureSpace(40);
+				doc.moveDown(0.3);
+				drawDivider();
+				doc.font(FONTS.bold).fontSize(19).fillColor(BRAND.primary)
+					.text(text, { align: "left" });
+				doc.moveDown(0.4);
+				return;
+			}
+			if (line.startsWith("<h3>") || line.startsWith("<h3 ")) {
+				const text = cleanInline(line.replace(/<\/?h3[^>]*>/g, ""));
+				ensureSpace(30);
+				doc.moveDown(0.2);
+				doc.font(FONTS.bold).fontSize(15).fillColor(BRAND.textDark)
+					.text(text, { align: "left" });
+				doc.moveDown(0.3);
+				return;
+			}
+			if (line.match(/^<h[4-6]/)) {
+				const text = cleanInline(line.replace(/<\/?h[4-6][^>]*>/g, ""));
+				ensureSpace(24);
+				doc.font(FONTS.bold).fontSize(12).fillColor(BRAND.textMedium)
+					.text(text, { align: "left" });
+				doc.moveDown(0.3);
+				return;
+			}
+
+			// ── Horizontal rule ──
+			if (line === "<hr>" || line === "<hr/>") {
+				drawDivider();
+				return;
+			}
+
+			// ── Lists ──
+			if (line === "<ol>") { inOrderedList = true; orderedListIndex = 0; listDepth++; return; }
+			if (line === "</ol>") { inOrderedList = false; listDepth--; doc.moveDown(0.3); return; }
+			if (line === "<ul>") { listDepth++; return; }
+			if (line === "</ul>") { listDepth--; doc.moveDown(0.3); return; }
+			if (line.startsWith("<li>")) {
+				const text = cleanInline(line.replace(/<\/?li>/g, ""));
+				if (!text) return;
+				const depthLevel = Math.max(0, listDepth - 1);
+				const indent = PAGE.marginLeft + depthLevel * 16 + 14;
+				const textX = indent + 4;
+				const textWidth = doc.page.width - PAGE.marginRight - textX;
+				ensureSpace(16);
+
+				if (inOrderedList) {
+					orderedListIndex++;
+					// Render number
+					doc.font(FONTS.bold).fontSize(10.5).fillColor(BRAND.primary)
+						.text(`${orderedListIndex}.`, indent - 14, doc.y, {
+							width: 18,
+							align: "right",
+						});
+					// Move y back up to the same line, render text beside it
+					doc.moveUp();
+					doc.font(FONTS.regular).fontSize(10.5).fillColor(BRAND.textDark)
+						.text(text, textX, doc.y, {
+							width: textWidth,
+							lineGap: 2,
+						});
+				} else {
+					// Render bullet marker
+					doc.font(FONTS.regular).fontSize(10.5).fillColor(BRAND.primary)
+						.text("-", indent - 10, doc.y, {
+							width: 10,
+						});
+					// Move y back up, render text beside it
+					doc.moveUp();
+					doc.font(FONTS.regular).fontSize(10.5).fillColor(BRAND.textDark)
+						.text(text, textX, doc.y, {
+							width: textWidth,
+							lineGap: 2,
+						});
+				}
+				doc.moveDown(0.15);
+				return;
+			}
+
+			// ── Images ──
+			if (line.includes("<img")) {
+				const altMatch = line.match(/alt="([^"]*)"/);
+				const caption = altMatch ? `[Image: ${altMatch[1]}]` : "[Image]";
+				doc.font(FONTS.italic).fontSize(10).fillColor(BRAND.textLight)
+					.text(caption, { align: "center" });
+				doc.moveDown(0.5);
+				return;
+			}
+
+			// ── Paragraphs / default text ──
+			if (line.startsWith("<p>") || line.startsWith("<div>")) {
+				const text = cleanInline(line.replace(/<\/?(p|div)>/g, ""));
+				if (!text) return;
+				ensureSpace(16);
+				doc.font(FONTS.regular).fontSize(10.5).fillColor(BRAND.textDark)
+					.text(text, {
+						width: pageWidth,
+						lineGap: 2.5,
 						align: "left",
-						underline: formatting.underline,
-						strike: formatting.strike,
 					});
-				doc.moveDown(styles.li.spacing);
-			} else if (line.startsWith("</ul>") || line.startsWith("</ol>")) {
 				doc.moveDown(0.5);
-			} else if (line.includes("<img")) {
-				const altText = line.match(/alt="(.*?)"/);
-				const caption = altText ? `[Image: ${altText[1]}]` : "[Image]";
-				doc.font(styles.em.font).fontSize(styles.p.fontSize).text(caption, { align: "center" });
-				doc.moveDown(1);
-			} else if (inBlockquote) {
-				const { text, formatting } = processInlineTags(line);
-				doc.text("> " + text, {
-					indent: 20,
-					align: "left",
-					underline: formatting.underline,
-					strike: formatting.strike,
-				});
-			} else if (inCodeBlock) {
-				doc.text(line, {
-					indent: 10,
-					align: "left",
-				});
-			} else if (line) {
-				const { text, formatting } = processInlineTags(line);
-				doc.font(styles.p.font).fontSize(styles.p.fontSize).text(text, {
-					underline: formatting.underline,
-					strike: formatting.strike,
-				});
-				doc.moveDown(0.5);
+				return;
+			}
+
+			// ── Fallback ──
+			if (!line.match(/^<\/?(ul|ol|table|thead|tbody|tr|blockquote|pre)/)) {
+				const text = cleanInline(line);
+				if (text) {
+					doc.font(FONTS.regular).fontSize(10.5).fillColor(BRAND.textDark)
+						.text(text, { lineGap: 2 });
+					doc.moveDown(0.3);
+				}
 			}
 		});
 
+		// ── Add page numbers + footer to all pages ──
+		// CRITICAL: Override addPage to no-op during the footer pass.
+		// PDFKit's doc.text() auto-creates pages when y is near the bottom,
+		// even with lineBreak:false. This prevents the blank-page cascade.
+		const range = doc.bufferedPageRange();
+		const totalPages = range.count;
+
+		const _origAddPage = doc.addPage;
+		doc.addPage = () => doc; // disable auto page creation
+
+		for (let i = 0; i < totalPages; i++) {
+			doc.switchToPage(i);
+
+			const footerY = doc.page.height - PAGE.marginBottom + 15;
+
+			// Footer line
+			doc.save()
+				.moveTo(PAGE.marginLeft, footerY)
+				.lineTo(doc.page.width - PAGE.marginRight, footerY)
+				.lineWidth(0.5)
+				.strokeColor(BRAND.border)
+				.stroke()
+				.restore();
+
+			// Page number
+			doc.font(FONTS.regular).fontSize(8).fillColor(BRAND.textLight);
+			doc.text(
+				`Page ${i + 1} of ${totalPages}`,
+				PAGE.marginLeft, footerY + 6,
+				{ width: pageWidth, align: "right", lineBreak: false }
+			);
+
+			// Footer brand
+			doc.font(FONTS.regular).fontSize(8).fillColor(BRAND.textLight);
+			doc.text(
+				"Generated by ChangeAI",
+				PAGE.marginLeft, footerY + 6,
+				{ width: pageWidth, align: "left", lineBreak: false }
+			);
+		}
+
+		doc.addPage = _origAddPage; // restore
 		doc.end();
 	});
 };
