@@ -181,18 +181,6 @@ const fetchAndNormalize = async (source, sourceId, options) => {
  * Main export generation function.
  */
 const generate = async ({ type, source, sourceId, options }) => {
-	// Assessment PDF fast-path: redirect to pre-generated URL
-	if (type === "pdf" && source === "assessment") {
-		const assessment = await workspaceAssessmentService.getWorkspaceAssessmentById(sourceId);
-		if (!assessment) {
-			throw new ApiError(httpStatus.NOT_FOUND, "Assessment not found");
-		}
-		if (assessment.report?.url) {
-			return { redirectUrl: assessment.report.url };
-		}
-		// No pre-generated URL — fall through to generate
-	}
-
 	const normalized = await fetchAndNormalize(source, sourceId, options);
 	const generator = generators[type];
 	if (!generator) {
