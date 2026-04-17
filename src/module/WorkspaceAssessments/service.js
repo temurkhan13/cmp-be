@@ -55,7 +55,7 @@ const createWorkspaceAssessment = async (body) => {
 				if (isMarkdownDetected(aiData.message)) {
 					await supabase.from("assessment_reports").insert({
 						assessment_id: existing.id, is_generated: true,
-						title: aiData.title || "Report Title", content: aiData.message,
+						title: aiData.title || name || "Report Title", content: aiData.message,
 						generated_at: new Date(),
 					});
 					await supabase.from("workspace_assessments").update({ status: "completed" }).eq("id", existing.id);
@@ -102,7 +102,7 @@ const createWorkspaceAssessment = async (body) => {
 	if (shouldGenerateReport) {
 		await supabase.from("assessment_reports").insert({
 			assessment_id: assessment.id, is_generated: true,
-			title: aiData.title || "Report Title", content: aiData.message,
+			title: aiData.title || name || "Report Title", content: aiData.message,
 			generated_at: new Date(),
 		});
 		await supabase.from("workspace_assessments").update({ status: "completed" }).eq("id", assessment.id);
@@ -196,7 +196,7 @@ const recoverZombieIfNeeded = async (assessment) => {
 		if (isMarkdownDetected(aiData.message)) {
 			await supabase.from("assessment_reports").insert({
 				assessment_id: assessment.id, is_generated: true,
-				title: aiData.title || "Report Title", content: aiData.message,
+				title: aiData.title || assessment.name || "Report Title", content: aiData.message,
 				generated_at: new Date(),
 			});
 			await supabase.from("workspace_assessments").update({ status: "completed" }).eq("id", assessment.id);
@@ -377,7 +377,7 @@ const updateAssessmentAnswer = async (workspaceAssessmentId, body) => {
 	if (isMarkdownDetected(aiData.message)) {
 		await supabase.from("assessment_reports").upsert({
 			assessment_id: workspaceAssessmentId, is_generated: true,
-			title: aiData.title || "Report Title", content: aiData.message,
+			title: aiData.title || assessment.name || "Report Title", content: aiData.message,
 			generated_at: new Date(),
 		});
 		await supabase.from("workspace_assessments").update({ status: "completed" }).eq("id", workspaceAssessmentId);
@@ -423,7 +423,7 @@ const downloadAssessmentReport = async (workspaceAssessmentId) => {
 
 	const { convertMarkdownToPDF } = require("../../utils/markdownToPDF");
 	const buffer = await convertMarkdownToPDF(assessment.report.content);
-	const fileName = generateSafePdfFilename(assessment.report.title || "assessment-report");
+	const fileName = generateSafePdfFilename(assessment.name || assessment.report.title || "assessment-report");
 
 	return { status: true, data: { fileName, buffer } };
 };
