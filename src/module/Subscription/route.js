@@ -7,18 +7,18 @@ const auth = require("../../middlewares/auth");
 const router = express.Router();
 
 router
-	.route("/subscription")
-	.get(auth(), validate(validation.getSubscriptions), controller.getSubscriptions)
-	.post(auth(), validate(validation.createSubscription), controller.createSubscription);
+  .route("/subscription")
+  .get(auth(), validate(validation.getSubscriptions), controller.getSubscriptions)
+  .post(auth(), validate(validation.createSubscription), controller.createSubscription);
 router
-	.route("/subscription/:subscriptionId")
-	.patch(auth(), validate(validation.upgradeSubscription), controller.upgradeSubscription)
-	.delete(auth(), validate(validation.cancelSubscription), controller.cancelSubscription);
+  .route("/subscription/:subscriptionId")
+  .patch(auth(), validate(validation.upgradeSubscription), controller.upgradeSubscription)
+  .delete(auth(), validate(validation.cancelSubscription), controller.cancelSubscription);
 router.get("/subscription/invoices", auth(), controller.getInvoices);
 router.post("/subscription/resume", auth(), controller.resumeSubscription);
 router.post("/subscription/verify-session", auth(), controller.verifySession);
 router.post("/webhook/endpoint", controller.webhook);
 
 module.exports = {
-	stripeRoutes: router,
+  stripeRoutes: router,
 };

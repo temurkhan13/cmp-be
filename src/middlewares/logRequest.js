@@ -1,4 +1,4 @@
-const logger = require('../config/logger');
+const logger = require("../config/logger");
 
 // in every request
 module.exports = function (req, res, next) {

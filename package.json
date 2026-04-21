@@ -51,6 +51,9 @@
     "xss-clean": "^0.1.1"
   },
   "devDependencies": {
-    "nodemon": "^2.0.0"
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.2.1",
+    "nodemon": "^2.0.0",
+    "prettier": "^3.8.3"
   }
 }

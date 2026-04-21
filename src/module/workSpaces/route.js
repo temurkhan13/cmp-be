@@ -8,17 +8,26 @@ const checkSubscription = require("../../middlewares/checkSubscription");
 const router = express.Router();
 
 router
-	.route("/")
-	.post(auth(), checkSubscription({ checkWorkspace: true }), controller.create)
-	.get(auth(), controller.query);
-router.route("/:id").get(auth(), controller.get).patch(auth(), controller.update).delete(auth(), controller.deleteWorkspace);
+  .route("/")
+  .post(auth(), checkSubscription({ checkWorkspace: true }), controller.create)
+  .get(auth(), controller.query);
+router
+  .route("/:id")
+  .get(auth(), controller.get)
+  .patch(auth(), controller.update)
+  .delete(auth(), controller.deleteWorkspace);
 
-router.post("/:workspaceId/folder", auth(), checkSubscription({ checkProject: true }), controller.createFolder);
+router.post(
+  "/:workspaceId/folder",
+  auth(),
+  checkSubscription({ checkProject: true }),
+  controller.createFolder
+);
 
 router
-	.route("/:workspaceId/folder/:folderId")
-	.patch(auth(), controller.updateFolder)
-	.delete(auth(), controller.deleteFolder);
+  .route("/:workspaceId/folder/:folderId")
+  .patch(auth(), controller.updateFolder)
+  .delete(auth(), controller.deleteFolder);
 
 router.get("/:workspaceId/folder/:folderId", auth(), controller.getFolderEntities);
 
@@ -26,133 +35,148 @@ router.get("/:workspaceId/folder/:folderId/chat", auth(), controller.getFolderCh
 router.post("/:workspaceId/folder/:folderId/chat", auth(), controller.assistantChat);
 
 router
-	.route("/:workspaceId/folder/:folderId/chat/:chatId")
-	.get(auth(), controller.getAssistantChat)
-	.patch(auth(), controller.updateAssistantChat)
-	.delete(auth(), controller.deleteAssistantChat);
+  .route("/:workspaceId/folder/:folderId/chat/:chatId")
+  .get(auth(), controller.getAssistantChat)
+  .patch(auth(), controller.updateAssistantChat)
+  .delete(auth(), controller.deleteAssistantChat);
 
 router.post("/:workspaceId/folder/:folderId/chat/:chatId/share", auth(), controller.shareChat);
 router.post("/invite/accept", controller.acceptChatInvite);
 
-router.post(
-	"/extract-text",
-	auth(),
-	fileUpload.single("pdfPath"),
-	controller.extractFileText,
-);
+router.post("/extract-text", auth(), fileUpload.single("pdfPath"), controller.extractFileText);
 
 router.patch(
-	"/:workspaceId/folder/:folderId/chat/:chatId/message",
-	auth(),
-	fileUpload.single("pdfPath"),
-	checkSubscription({ checkWordLimit: true, wordCountField: "text" }),
-	controller.assistantChatUpdate,
+  "/:workspaceId/folder/:folderId/chat/:chatId/message",
+  auth(),
+  fileUpload.single("pdfPath"),
+  checkSubscription({ checkWordLimit: true, wordCountField: "text" }),
+  controller.assistantChatUpdate
 );
 
 router.put(
-	"/:workspaceId/folder/:folderId/chat/:chatId/message/:messageId",
-	auth(),
-	controller.updateMessageText,
+  "/:workspaceId/folder/:folderId/chat/:chatId/message/:messageId",
+  auth(),
+  controller.updateMessageText
 );
 
 router.get("/:workspaceId/folder/:folderId/chat/:chatId/media", auth(), controller.getChatMedia);
 router.get("/:workspaceId/folder/:folderId/chat/:chatId/links", auth(), controller.getChatLinks);
-router.get("/:workspaceId/folder/:folderId/chat/:chatId/documents", auth(), controller.getChatDocuments);
+router.get(
+  "/:workspaceId/folder/:folderId/chat/:chatId/documents",
+  auth(),
+  controller.getChatDocuments
+);
 router.patch(
-	"/:workspaceId/folder/:folderId/chat/:chatId/move-to-folder",
-	auth(),
-	controller.moveChatToFolderOfSameWorkspace,
+  "/:workspaceId/folder/:folderId/chat/:chatId/move-to-folder",
+  auth(),
+  controller.moveChatToFolderOfSameWorkspace
 );
 
 router.post(
-	"/:workspaceId/folder/:folderId/:contextType/:contextId/message/:messageId/comment",
-	auth(),
-	controller.createComment,
+  "/:workspaceId/folder/:folderId/:contextType/:contextId/message/:messageId/comment",
+  auth(),
+  controller.createComment
 );
 router
-	.route("/:workspaceId/folder/:folderId/:contextType/:contextId/message/:messageId/comment/:commentId")
-	.get(auth(), controller.getUserChatComments)
-	.patch(
-		// '/:workspaceId/folder/:folderId/:contextType/:contextId/message/:messageId/comment/:commentId',
-		auth(),
-		controller.updateComment,
-	)
-	.delete(auth(), controller.deleteComment);
+  .route(
+    "/:workspaceId/folder/:folderId/:contextType/:contextId/message/:messageId/comment/:commentId"
+  )
+  .get(auth(), controller.getUserChatComments)
+  .patch(
+    // '/:workspaceId/folder/:folderId/:contextType/:contextId/message/:messageId/comment/:commentId',
+    auth(),
+    controller.updateComment
+  )
+  .delete(auth(), controller.deleteComment);
 
 router.post(
-	"/:workspaceId/folder/:folderId/:contextType/:contextId/message/:messageId/toggle-like",
-	auth(),
-	controller.toggleMessageLike,
+  "/:workspaceId/folder/:folderId/:contextType/:contextId/message/:messageId/toggle-like",
+  auth(),
+  controller.toggleMessageLike
 );
 router.post(
-	"/:workspaceId/folder/:folderId/:contextType/:contextId/message/:messageId/toggle-dislike",
-	auth(),
-	controller.toggleMessageDislike,
+  "/:workspaceId/folder/:folderId/:contextType/:contextId/message/:messageId/toggle-dislike",
+  auth(),
+  controller.toggleMessageDislike
 );
 
 router.post(
-	"/:workspaceId/folder/:folderId/:contextType/:contextId/message/:messageId/bookmark",
-	auth(),
-	controller.bookmarkMessage,
+  "/:workspaceId/folder/:folderId/:contextType/:contextId/message/:messageId/bookmark",
+  auth(),
+  controller.bookmarkMessage
 );
 router.delete(
-	"/:workspaceId/folder/:folderId/:contextType/:contextId/message/:messageId/bookmark/:bookmarkId",
-	auth(),
-	controller.unbookmarkMessage,
+  "/:workspaceId/folder/:folderId/:contextType/:contextId/message/:messageId/bookmark/:bookmarkId",
+  auth(),
+  controller.unbookmarkMessage
 );
 router.get("/user/bookmarks", auth(), controller.getBookmarksForUser);
 router.get("/user/comments", auth(), controller.getCommentsForUser);
-router.get("/:workspaceId/folder/:folderId/:contextType/:contextId/bookmarks", auth(), controller.getBookmarksForChat);
+router.get(
+  "/:workspaceId/folder/:folderId/:contextType/:contextId/bookmarks",
+  auth(),
+  controller.getBookmarksForChat
+);
 
 router.post(
-	"/:workspaceId/folder/:folderId/chat/:chatId/message/:messageId/comment/:commentId/reply",
-	auth(),
-	controller.addReplyToComment,
+  "/:workspaceId/folder/:folderId/chat/:chatId/message/:messageId/comment/:commentId/reply",
+  auth(),
+  controller.addReplyToComment
 );
 router.patch(
-	"/:workspaceId/folder/:folderId/chat/:chatId/message/:messageId/comment/:commentId/reply/:replyId",
-	auth(),
-	controller.updateReplyInComment,
+  "/:workspaceId/folder/:folderId/chat/:chatId/message/:messageId/comment/:commentId/reply/:replyId",
+  auth(),
+  controller.updateReplyInComment
 );
 router.delete(
-	"/:workspaceId/folder/:folderId/chat/:chatId/message/:messageId/comment/:commentId/reply/:replyId",
-	auth(),
-	controller.deleteReplyFromComment,
+  "/:workspaceId/folder/:folderId/chat/:chatId/message/:messageId/comment/:commentId/reply/:replyId",
+  auth(),
+  controller.deleteReplyFromComment
 );
 router.post(
-	"/:workspaceId/folder/:folderId/assessment",
-	auth(),
-	fileUpload.single("file"),
-	checkSubscription({ checkWordLimit: true, wordCountField: "assessmentName" }),
-	controller.createAssessment,
+  "/:workspaceId/folder/:folderId/assessment",
+  auth(),
+  fileUpload.single("file"),
+  checkSubscription({ checkWordLimit: true, wordCountField: "assessmentName" }),
+  controller.createAssessment
 );
 router
-	.route("/:workspaceId/folder/:folderId/assessment/:assessmentId/subReport/:subReportId")
-	.patch(
-		auth(),
-		fileUpload.single("file"),
-		checkSubscription({ checkWordLimit: true, wordCountField: "content" }),
-		controller.updateAssessment,
-	)
-	.get(auth(), controller.getAssessment)
-	.delete(auth(), controller.deleteAssessment);
+  .route("/:workspaceId/folder/:folderId/assessment/:assessmentId/subReport/:subReportId")
+  .patch(
+    auth(),
+    fileUpload.single("file"),
+    checkSubscription({ checkWordLimit: true, wordCountField: "content" }),
+    controller.updateAssessment
+  )
+  .get(auth(), controller.getAssessment)
+  .delete(auth(), controller.deleteAssessment);
 
-router.post("/:workspaceId/folder/:folderId/assessment/:assessmentId/reports", auth(), controller.generateAssessmentReport);
-router.post("/:workspaceId/folder/:folderId/assessment/reports", auth(), controller.generateAssessmentReports);
+router.post(
+  "/:workspaceId/folder/:folderId/assessment/:assessmentId/reports",
+  auth(),
+  controller.generateAssessmentReport
+);
+router.post(
+  "/:workspaceId/folder/:folderId/assessment/reports",
+  auth(),
+  controller.generateAssessmentReports
+);
 
-router.route("/:workspaceId/folder/:folderId/businessInfo").post(auth(), controller.createBusinessInfo);
 router
-	.route("/:workspaceId/folder/:folderId/businessInfo/:businessInfoId")
-	.get(auth(), controller.getBusinessInfo)
-	.patch(auth(), controller.updateBusinessInfo)
-	.delete(auth(), controller.deleteBusinessInfo);
+  .route("/:workspaceId/folder/:folderId/businessInfo")
+  .post(auth(), controller.createBusinessInfo);
+router
+  .route("/:workspaceId/folder/:folderId/businessInfo/:businessInfoId")
+  .get(auth(), controller.getBusinessInfo)
+  .patch(auth(), controller.updateBusinessInfo)
+  .delete(auth(), controller.deleteBusinessInfo);
 
 router
-	.route("/:workspaceId/folder/:folderId/surveyInfo")
-	.post(auth(), controller.createSurveyInfo)
-	.get(auth(), controller.getSurveyInfo)
-	.patch(auth(), controller.updateSurveyInfo)
-	.delete(auth(), controller.deleteSurveyInfo);
+  .route("/:workspaceId/folder/:folderId/surveyInfo")
+  .post(auth(), controller.createSurveyInfo)
+  .get(auth(), controller.getSurveyInfo)
+  .patch(auth(), controller.updateSurveyInfo)
+  .delete(auth(), controller.deleteSurveyInfo);
 
 router.patch("/:entityType/:id/moveToTrash", auth(), controller.moveToTrash);
 router.patch("/:entityType/:id/restoreFromTrash", auth(), controller.restoreFromTrash);
@@ -165,47 +189,51 @@ router.get("/user/wireframes", auth(), controller.getUserWireframes);
 router.get("/user/dashboard-stats", auth(), controller.getUserDashboardStats);
 
 router
-	.route("/:workspaceId/folder/:folderId/sitemap")
-	.post(auth(), controller.addSitemapToWorkspace)
-	.get(auth(), controller.getSitemaps);
-router.route("/:workspaceId/folder/:folderId/sitemap/:sitemapId").get(auth(), controller.getSitemap);
+  .route("/:workspaceId/folder/:folderId/sitemap")
+  .post(auth(), controller.addSitemapToWorkspace)
+  .get(auth(), controller.getSitemaps);
+router
+  .route("/:workspaceId/folder/:folderId/sitemap/:sitemapId")
+  .get(auth(), controller.getSitemap);
 
 router
-	.route("/:workspaceId/folder/:folderId/wireframe")
-	.post(auth(), checkSubscription({ checkWireframe: true }), controller.createWireframe)
-	.get(auth(), controller.getWireframes);
+  .route("/:workspaceId/folder/:folderId/wireframe")
+  .post(auth(), checkSubscription({ checkWireframe: true }), controller.createWireframe)
+  .get(auth(), controller.getWireframes);
 router
-	.route("/:workspaceId/folder/:folderId/wireframe/:wireframeId")
-	.get(auth(), controller.getWireframe)
-	.patch(auth(), controller.updateWireframe)
-	.delete(auth(), controller.deleteWireframe);
+  .route("/:workspaceId/folder/:folderId/wireframe/:wireframeId")
+  .get(auth(), controller.getWireframe)
+  .patch(auth(), controller.updateWireframe)
+  .delete(auth(), controller.deleteWireframe);
 
-router.route("/:workspaceId/folder/:folderId/wireframe/:wireframeId/entity").post(auth(), controller.createWireframeEntity);
 router
-	.route("/:workspaceId/folder/:folderId/wireframe/:wireframeId/entity/bulk")
-	.post(auth(), controller.bulkCreateWireframeEntity);
+  .route("/:workspaceId/folder/:folderId/wireframe/:wireframeId/entity")
+  .post(auth(), controller.createWireframeEntity);
+router
+  .route("/:workspaceId/folder/:folderId/wireframe/:wireframeId/entity/bulk")
+  .post(auth(), controller.bulkCreateWireframeEntity);
 router.post(
-	"/:workspaceId/folder/:folderId/wireframe/:wireframeId/entity/bulk/update",
-	auth(),
-	controller.bulkUpdateWireframeEntity,
+  "/:workspaceId/folder/:folderId/wireframe/:wireframeId/entity/bulk/update",
+  auth(),
+  controller.bulkUpdateWireframeEntity
 );
 router.post(
-	"/:workspaceId/folder/:folderId/wireframe/:wireframeId/entity/bulk/delete",
-	auth(),
-	controller.bulkDeleteWireframeEntity,
+  "/:workspaceId/folder/:folderId/wireframe/:wireframeId/entity/bulk/delete",
+  auth(),
+  controller.bulkDeleteWireframeEntity
 );
 router.delete;
 router
-	.route("/:workspaceId/folder/:folderId/wireframe/:wireframeId/entity/:entityId")
-	.patch(auth(), controller.updateWireframeEntity)
-	.delete(auth(), controller.deleteWireframeEntity);
+  .route("/:workspaceId/folder/:folderId/wireframe/:wireframeId/entity/:entityId")
+  .patch(auth(), controller.updateWireframeEntity)
+  .delete(auth(), controller.deleteWireframeEntity);
 router.post(
-	"/:workspaceId/folder/:folderId/wireframe/:wireframeId/entity/:entityId/upload",
-	auth(),
-	fileUpload.single("image"),
-	controller.uploadEntityImage,
+  "/:workspaceId/folder/:folderId/wireframe/:wireframeId/entity/:entityId/upload",
+  auth(),
+  fileUpload.single("image"),
+  controller.uploadEntityImage
 );
 
 module.exports = {
-	workspaceRoutes: router,
+  workspaceRoutes: router,
 };

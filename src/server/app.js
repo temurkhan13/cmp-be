@@ -8,7 +8,7 @@ const passport = require("passport");
 const httpStatus = require("http-status");
 const config = require("../config/config");
 const morgan = require("../config/morgan");
-const { authLimiter } = require("../middlewares/rateLimiter");
+const { authLimiter, aiLimiter } = require("../middlewares/rateLimiter");
 const logRequest = require("../middlewares/logRequest");
 const { errorConverter, errorHandler } = require("../middlewares/error");
 const { authRoutes } = require("../module/users/route");
@@ -27,10 +27,9 @@ require("../config/passport")(passport);
 
 const app = express();
 
-
 if (config.env !== "test") {
-	app.use(morgan.successHandler);
-	app.use(morgan.errorHandler);
+  app.use(morgan.successHandler);
+  app.use(morgan.errorHandler);
 }
 
 app.use(helmet());
@@ -39,22 +38,21 @@ app.use(express.urlencoded({ limit: "10mb", extended: true }));
 app.use(xss());
 // app.use(mongoSanitize()); // Removed — not needed with PostgreSQL
 app.use(compression());
-app.use(cors({
-	origin: [
-		'https://cmp-frontend-gamma.vercel.app',
-		'https://cmp-frontend-temurkhan13s-projects.vercel.app',
-		'https://cmp-frontend-git-main-temurkhan13s-projects.vercel.app',
-		'http://localhost:5173',
-		'http://localhost:3000',
-	],
-	credentials: true,
-}));
+app.use(
+  cors({
+    origin: config.allowedOrigins,
+    credentials: true,
+  })
+);
 app.use(passport.initialize());
 app.use("/api/auth", authLimiter);
+app.use("/api/chat", aiLimiter);
+app.use("/api/workspace", aiLimiter);
+app.use("/api/export", aiLimiter);
 app.use(express.static("public"));
 app.use(logRequest);
-app.get("/", (req, res) => {
-	res.send("OOKKKKKK");
+app.get("/health", (req, res) => {
+  res.status(200).json({ status: "ok" });
 });
 
 app.use("/api/auth", authRoutes);
@@ -71,7 +69,7 @@ app.use("/api/support", supportRoutes);
 app.use("/api/export", exportRoutes);
 
 app.use((req, res, next) => {
-	next(new ApiError(httpStatus.NOT_FOUND, "API Not found"));
+  next(new ApiError(httpStatus.NOT_FOUND, "API Not found"));
 });
 app.use(errorConverter);
 app.use(errorHandler);

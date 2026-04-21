@@ -1,12 +1,9 @@
-const httpStatus = require('http-status');
-const catchAsync = require('../../utils/catchAsync');
-const service = require('./service');
-const tokenService = require('../tokens/service');
-const pick = require('../../utils/pick');
+const httpStatus = require("http-status");
+const catchAsync = require("../../utils/catchAsync");
+const service = require("./service");
 
 const createAssessment = catchAsync(async (req, res) => {
   const { user, body } = req;
-  console.log('req body====', body);
   if (body.generalInfo) {
     body.messages = [
       {
@@ -24,7 +21,6 @@ const createAssessment = catchAsync(async (req, res) => {
 
 const createSurvey = catchAsync(async (req, res) => {
   const { user, body } = req;
-  console.log('req body====', body);
   if (body.generalInfo) {
     body.messages = [
       {
@@ -36,11 +32,7 @@ const createSurvey = catchAsync(async (req, res) => {
     ];
   }
   body.user = user._id;
-  const chat = await service.createSurvey(
-    body,
-    body.generalInfo,
-    body.surveyType
-  );
+  const chat = await service.createSurvey(body, body.generalInfo, body.surveyType);
   res.status(httpStatus.OK).send(chat);
 });
 
@@ -53,8 +45,6 @@ const get = catchAsync(async (req, res) => {
 const updateAssessment = catchAsync(async (req, res) => {
   const { user, body } = req;
   const { id } = req.params;
-  console.log('req body====', body);
-
   if (body.generalInfo) {
     body.messages = [
       {
@@ -79,12 +69,10 @@ const updateAssessment = catchAsync(async (req, res) => {
 const updateSurvey = catchAsync(async (req, res) => {
   const { user, body } = req;
   const { id } = req.params;
-  console.log('req body====', body);
-
   const message = {
     text: body.message,
     generalInfo: body.generalInfo,
-    surveyType: body.surveyType, // Correct the spelling if necessary
+    surveyType: body.surveyType,
     sender: user._id,
   };
 
@@ -94,7 +82,6 @@ const updateSurvey = catchAsync(async (req, res) => {
 
 const createCheckChat = catchAsync(async (req, res) => {
   const { user, body } = req;
-  console.log('req body====', body);
   if (body.generalInfo) {
     body.messages = [
       {
@@ -106,23 +93,17 @@ const createCheckChat = catchAsync(async (req, res) => {
     ];
   }
   body.user = user._id;
-  const chat = await service.createCheckChat(
-    body,
-    body.generalInfo,
-    body.checkType
-  );
+  const chat = await service.createCheckChat(body, body.generalInfo, body.checkType);
   res.status(httpStatus.OK).send(chat);
 });
 
 const updateCheckChat = catchAsync(async (req, res) => {
   const { user, body } = req;
   const { id } = req.params;
-  console.log('req body====', body);
-
   const message = {
     text: body.message,
     generalInfo: body.generalInfo,
-    checkType: body.checkType, // Correct the spelling if necessary
+    checkType: body.checkType,
     sender: user._id,
   };
 
@@ -131,8 +112,6 @@ const updateCheckChat = catchAsync(async (req, res) => {
 });
 const inspireMe = catchAsync(async (req, res) => {
   const { body } = req;
-  console.log('req body====', body);
-
   const message = {
     message: body.message,
     general_info: body.generalInfo,
@@ -147,7 +126,9 @@ const saveVersion = catchAsync(async (req, res) => {
   const { id } = req.params;
   const version = await service.saveVersion(id);
   if (!version) {
-    return res.status(httpStatus.BAD_REQUEST).send({ message: 'No report found to save as version' });
+    return res
+      .status(httpStatus.BAD_REQUEST)
+      .send({ message: "No report found to save as version" });
   }
   res.status(httpStatus.CREATED).send(version);
 });

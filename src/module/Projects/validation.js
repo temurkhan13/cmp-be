@@ -1,5 +1,5 @@
-const Joi = require('joi');
-const { password, objectId } = require('../../utils/custom.validation');
+const Joi = require("joi");
+const { password, objectId } = require("../../utils/custom.validation");
 
 const register = {
   body: Joi.object().keys({
@@ -57,7 +57,7 @@ const deleteUser = {
   }),
 };
 
-const deviceToken = {
+const _deviceToken = {
   body: Joi.object().keys({
     userId: Joi.string().custom(objectId).required(),
     addToken: Joi.boolean().required(),

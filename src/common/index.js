@@ -1,1 +1,1 @@
-module.exports.globalFunctions = require('./global.functions');
+module.exports.globalFunctions = require("./global.functions");
