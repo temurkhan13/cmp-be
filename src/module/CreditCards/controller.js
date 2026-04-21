@@ -1,7 +1,6 @@
-const httpStatus = require('http-status');
-const catchAsync = require('../../utils/catchAsync');
-const service = require('./service');
-const pick = require('../../utils/pick');
+const httpStatus = require("http-status");
+const catchAsync = require("../../utils/catchAsync");
+const service = require("./service");
 
 const create = catchAsync(async (req, res) => {
   const { user } = req;

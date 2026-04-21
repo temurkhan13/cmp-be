@@ -1,10 +1,10 @@
-const { Resend } = require('resend');
-const config = require('../config/config');
-const logger = require('../config/logger');
+const { Resend } = require("resend");
+const config = require("../config/config");
+const logger = require("../config/logger");
 
 const resend = new Resend(config.resendApiKey);
 
-const fromAddress = 'ChangeAI <onboarding@resend.dev>';
+const fromAddress = "ChangeAI <onboarding@resend.dev>";
 
 const emailWrapper = (content) => `
 <!DOCTYPE html>
@@ -43,7 +43,7 @@ const sendVerificationEmail = async (email, verificationCode) => {
     const { data, error } = await resend.emails.send({
       from: fromAddress,
       to: email,
-      subject: 'Verify your email — ChangeAI',
+      subject: "Verify your email — ChangeAI",
       text: `Your ChangeAI verification code is: ${verificationCode}`,
       html,
     });
@@ -73,7 +73,7 @@ const sendForgotPasswordEmail = async (email, verificationCode) => {
     const { data, error } = await resend.emails.send({
       from: fromAddress,
       to: email,
-      subject: 'Password Reset Code — ChangeAI',
+      subject: "Password Reset Code — ChangeAI",
       text: `Your ChangeAI password reset code is: ${verificationCode}`,
       html,
     });
@@ -116,7 +116,7 @@ const sendInviteEmail = async (email, inviteLink) => {
 };
 
 const sendWelcomeEmail = async (email, firstName) => {
-  const name = firstName || 'there';
+  const name = firstName || "there";
   const html = emailWrapper(`
     <h2 style="margin:0 0 8px;font-size:20px;color:#111;">Welcome to ChangeAI, ${name}!</h2>
     <p style="color:#6b7280;font-size:14px;line-height:1.6;">
@@ -140,7 +140,7 @@ const sendWelcomeEmail = async (email, firstName) => {
     const { data, error } = await resend.emails.send({
       from: fromAddress,
       to: email,
-      subject: 'Welcome to ChangeAI — You\'re all set!',
+      subject: "Welcome to ChangeAI — You're all set!",
       text: `Welcome to ChangeAI, ${name}! Your email has been verified. Visit your dashboard: https://cmp-frontend-gamma.vercel.app/dashboard`,
       html,
     });
@@ -152,7 +152,7 @@ const sendWelcomeEmail = async (email, firstName) => {
   }
 };
 
-const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'imran@innovationworks.co.uk';
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "imran@innovationworks.co.uk";
 
 const sendSupportNotification = async (userEmail, userName, userQuery, botReply) => {
   const html = emailWrapper(`
@@ -163,7 +163,7 @@ const sendSupportNotification = async (userEmail, userName, userQuery, botReply)
       <p style="margin:0 0 4px;font-size:12px;color:#9ca3af;font-weight:600;">USER QUESTION</p>
       <p style="margin:0 0 12px;font-size:14px;color:#374151;">${userQuery}</p>
       <p style="margin:0 0 4px;font-size:12px;color:#9ca3af;font-weight:600;">BOT RESPONSE</p>
-      <p style="margin:0;font-size:13px;color:#6b7280;">${botReply.substring(0, 500)}${botReply.length > 500 ? '...' : ''}</p>
+      <p style="margin:0;font-size:13px;color:#6b7280;">${botReply.substring(0, 500)}${botReply.length > 500 ? "..." : ""}</p>
     </div>
     <p style="color:#9ca3af;font-size:12px;">Reply directly to the user at ${userEmail} if follow-up is needed.</p>
   `);

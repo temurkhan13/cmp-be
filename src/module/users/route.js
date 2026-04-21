@@ -9,9 +9,9 @@ const { fileUpload } = require("../../utils/fileUpload");
 const router = express.Router();
 
 router
-	.route("/")
-	.post(validate(validation.register), controller.register)
-	.get(validate(validation.queryUsers), controller.queryUsers);
+  .route("/")
+  .post(validate(validation.register), controller.register)
+  .get(validate(validation.queryUsers), controller.queryUsers);
 
 router.route("/verification").post(auth(), controller.verifyEmail);
 router.post("/forgot/password", validate(validation.forgotPassword), controller.forgotPassword);
@@ -22,21 +22,30 @@ router.route("/refresh-tokens").post(controller.refreshTokens);
 router.route("/email/send-verification").post(auth(), controller.sendVerificationEmailToUser);
 
 router
-	.route("/users/:userId")
-	.get(auth(), validate(validation.getUser), controller.getUser)
-	.patch(auth(), [fileUpload.single("photoPath"), validate(validation.updateUser)], controller.updateUser);
+  .route("/users/:userId")
+  .get(auth(), validate(validation.getUser), controller.getUser)
+  .patch(
+    auth(),
+    [fileUpload.single("photoPath"), validate(validation.updateUser)],
+    controller.updateUser
+  );
 
 router.get("/google", passport.authenticate("google", { scope: ["profile", "email"] }));
 router.get(
-	"/google/callback",
-	passport.authenticate("google", { failureRedirect: "/login", session: false }),
-	controller.verifyGoogleCallback,
+  "/google/callback",
+  passport.authenticate("google", { failureRedirect: "/login", session: false }),
+  controller.verifyGoogleCallback
 );
 router.post("/get-user-from-token", auth(), controller.getUserFromToken);
 router.get("/user-subscription", auth(), controller.getUserSubscriptions);
-router.post("/change-password", auth(), validate(validation.changePassword), controller.changePassword);
+router.post(
+  "/change-password",
+  auth(),
+  validate(validation.changePassword),
+  controller.changePassword
+);
 router.delete("/delete-account", auth(), controller.deleteAccount);
 
 module.exports = {
-	authRoutes: router,
+  authRoutes: router,
 };

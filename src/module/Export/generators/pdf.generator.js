@@ -5,10 +5,10 @@ const { convertMarkdownToPDF } = require("../../../utils/markdownToPDF");
  * Passes title for the cover page.
  */
 const generate = async (normalized) => {
-	return convertMarkdownToPDF(normalized.markdown, {
-		title: normalized.title,
-		coverPage: true,
-	});
+  return convertMarkdownToPDF(normalized.markdown, {
+    title: normalized.title,
+    coverPage: true,
+  });
 };
 
 module.exports = generate;

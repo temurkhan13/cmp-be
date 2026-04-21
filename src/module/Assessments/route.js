@@ -15,10 +15,15 @@ router.post("/", auth(), controller.createCheckChat);
 router.patch("/:id", auth(), controller.createCheckChat);
 
 // Version management
-router.post("/:id/version", auth(), checkSubscription({ checkVersionHistory: true }), controller.saveVersion);
+router.post(
+  "/:id/version",
+  auth(),
+  checkSubscription({ checkVersionHistory: true }),
+  controller.saveVersion
+);
 router.get("/:id/versions", auth(), controller.getVersions);
 router.post("/:id/version/:versionId/restore", auth(), controller.restoreVersion);
 
 module.exports = {
-	assessmentRoutes: router,
+  assessmentRoutes: router,
 };
