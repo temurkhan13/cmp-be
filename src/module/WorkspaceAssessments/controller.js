@@ -83,6 +83,17 @@ const updateAssessmentAnswer = catchAsync(async (req, res) => {
   }
   res.send(workspaceAssessment);
 });
+const updateAssessmentQuestion = catchAsync(async (req, res) => {
+  const result = await workspaceAssessmentService.updateAssessmentQuestion(
+    req.params.workspaceAssessmentId,
+    req.params.qaId,
+    req.body
+  );
+  if (!result.status) {
+    throw new ApiError(httpStatus.NOT_FOUND, result.message);
+  }
+  res.send(result.data);
+});
 const updateAssessmentReport = catchAsync(async (req, res) => {
   const workspaceAssessment = await workspaceAssessmentService.updateAssessmentReport(
     req.params.workspaceAssessmentId,
@@ -118,6 +129,7 @@ module.exports = {
   updateWorkspaceAssessment,
   deleteWorkspaceAssessment,
   updateAssessmentAnswer,
+  updateAssessmentQuestion,
   updateAssessmentReport,
   downloadAssessmentReport,
 };

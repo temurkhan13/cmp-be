@@ -37,6 +37,12 @@ router.patch(
   controller.updateAssessmentAnswer
 );
 router.patch(
+  "/:workspaceAssessmentId/qa/:qaId",
+  auth(),
+  validate(validation.updateAssessmentQuestion),
+  controller.updateAssessmentQuestion
+);
+router.patch(
   "/:workspaceAssessmentId/report",
   auth(),
   validate(validation.updateAssessmentReport),

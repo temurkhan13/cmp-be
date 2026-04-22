@@ -48,6 +48,15 @@ const updateAssessmentAnswer = {
     })
     .unknown(true),
 };
+const updateAssessmentQuestion = {
+  params: Joi.object().keys({
+    workspaceAssessmentId: Joi.string().custom(objectId),
+    qaId: Joi.string().custom(objectId),
+  }),
+  body: Joi.object().keys({
+    question: Joi.string().required(),
+  }),
+};
 const updateAssessmentReport = {
   params: Joi.object().keys({
     workspaceAssessmentId: Joi.string().custom(objectId),
@@ -72,6 +81,7 @@ module.exports = {
   updateWorkspaceAssessment,
   deleteWorkspaceAssessment,
   updateAssessmentAnswer,
+  updateAssessmentQuestion,
   updateAssessmentReport,
   downloadAssessmentReport,
 };

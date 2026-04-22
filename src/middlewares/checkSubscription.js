@@ -3,8 +3,15 @@ const ApiError = require("../utils/ApiError");
 const supabase = require("../config/supabase");
 const logger = require("../config/logger");
 
-const countWords = (text) => {
-  if (!text) return 0;
+const countWords = (input) => {
+  if (!input) return 0;
+  // Tolerate object-shaped payloads (e.g. { selectedText }) — some AI hooks
+  // historically nested the text under a key instead of sending a plain string.
+  const text =
+    typeof input === "string"
+      ? input
+      : input.selectedText || input.text || input.message || "";
+  if (!text || typeof text !== "string") return 0;
   return text.trim().split(/\s+/).length;
 };
 
