@@ -614,6 +614,26 @@ const downloadAssessmentReport = async (workspaceAssessmentId) => {
   return { status: true, data: { fileName, buffer } };
 };
 
+const updateAssessmentQuestion = async (workspaceAssessmentId, qaId, { question }) => {
+  const { data: qa, error: qaFetchError } = await supabase
+    .from("assessment_qa")
+    .select("id, assessment_id")
+    .eq("id", qaId)
+    .eq("assessment_id", workspaceAssessmentId)
+    .maybeSingle();
+  if (qaFetchError) throw qaFetchError;
+  if (!qa) return handleStatus(false, "Question not found");
+
+  const { error: updateError } = await supabase
+    .from("assessment_qa")
+    .update({ question })
+    .eq("id", qaId);
+  if (updateError) throw updateError;
+
+  const refreshed = await getWorkspaceAssessmentById(workspaceAssessmentId);
+  return { status: true, data: refreshed };
+};
+
 module.exports = {
   createWorkspaceAssessment,
   queryWorkspaceAssessments,
@@ -622,6 +642,7 @@ module.exports = {
   updateWorkspaceAssessmentById,
   deleteWorkspaceAssessmentById,
   updateAssessmentAnswer,
+  updateAssessmentQuestion,
   updateAssessmentReport,
   downloadAssessmentReport,
 };
