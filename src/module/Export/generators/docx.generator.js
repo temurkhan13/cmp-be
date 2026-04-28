@@ -59,6 +59,8 @@ const htmlToDocxParagraphs = (html) => {
   let inOl = false;
   let olIndex = 0;
   let inTable = false;
+  let inTableHeader = false;
+  let currentRow = [];
   let tableHeaders = [];
   let tableRows = [];
   let inBlockquote = false;
@@ -262,8 +264,11 @@ const htmlToDocxParagraphs = (html) => {
     }
 
     // ── Table ──
+    // markdown-it splits each <th>/<td> onto its own line, so accumulate cells per <tr>
     if (line.startsWith("<table>")) {
       inTable = true;
+      inTableHeader = false;
+      currentRow = [];
       tableHeaders = [];
       tableRows = [];
       continue;
@@ -274,21 +279,34 @@ const htmlToDocxParagraphs = (html) => {
       continue;
     }
     if (inTable) {
-      if (line.includes("<th>")) {
-        tableHeaders = line
-          .replace(/<\/?tr>/g, "")
-          .replace(/<\/?thead>/g, "")
-          .split(/<\/?th>/)
-          .filter((s) => s.trim() && !s.startsWith("<"))
-          .map((s) => s.replace(/<[^>]*>/g, "").trim());
-      } else if (line.includes("<td>")) {
-        const cells = line
-          .replace(/<\/?tr>/g, "")
-          .replace(/<\/?tbody>/g, "")
-          .split(/<\/?td>/)
-          .filter((s) => s.trim() && !s.startsWith("<"))
-          .map((s) => s.replace(/<[^>]*>/g, "").trim());
-        if (cells.length) tableRows.push(cells);
+      if (line === "<thead>") {
+        inTableHeader = true;
+        continue;
+      }
+      if (line === "</thead>") {
+        inTableHeader = false;
+        continue;
+      }
+      if (line === "<tbody>" || line === "</tbody>") continue;
+      if (line === "<tr>") {
+        currentRow = [];
+        continue;
+      }
+      if (line === "</tr>") {
+        if (currentRow.length > 0) {
+          if (inTableHeader) tableHeaders = currentRow;
+          else tableRows.push(currentRow);
+        }
+        currentRow = [];
+        continue;
+      }
+      if (/^<(th|td)[> ]/.test(line)) {
+        const matches = line.match(/<(?:th|td)[^>]*>([\s\S]*?)<\/(?:th|td)>/gi) || [];
+        for (const m of matches) {
+          const text = m.replace(/<\/?(th|td)[^>]*>/g, "").replace(/<[^>]*>/g, "").trim();
+          currentRow.push(text);
+        }
+        continue;
       }
       continue;
     }

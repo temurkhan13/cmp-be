@@ -73,6 +73,11 @@ const downloadAssessmentReport = {
     workspaceAssessmentId: Joi.string().custom(objectId),
   }),
 };
+const regenerateAssessmentReport = {
+  params: Joi.object().keys({
+    workspaceAssessmentId: Joi.string().custom(objectId),
+  }),
+};
 
 module.exports = {
   createWorkspaceAssessment,
@@ -84,4 +89,5 @@ module.exports = {
   updateAssessmentQuestion,
   updateAssessmentReport,
   downloadAssessmentReport,
+  regenerateAssessmentReport,
 };

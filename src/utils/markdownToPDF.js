@@ -172,6 +172,8 @@ const convertMarkdownToPDF = (markdown, opts = {}) => {
     let inBlockquote = false;
     let blockquoteLines = [];
     let inTable = false;
+    let inTableHeader = false;
+    let currentRow = [];
     let tableHeaders = [];
     let tableRows = [];
     let orderedListIndex = 0;
@@ -236,56 +238,89 @@ const convertMarkdownToPDF = (markdown, opts = {}) => {
       const colCount = tableHeaders.length;
       const colWidth = pageWidth / colCount;
       const cellPad = 6;
-      const rowHeight = 22;
+      const minRowHeight = 22;
+      const lineGap = 2;
+      const fontSize = 9;
+      const cellWidth = colWidth - cellPad * 2;
 
-      ensureSpace((tableRows.length + 1) * rowHeight + 10);
-
-      let y = doc.y;
-
-      // Header row
-      doc.save().rect(PAGE.marginLeft, y, pageWidth, rowHeight).fill(BRAND.tableHeaderBg);
-      doc.restore();
-      tableHeaders.forEach((header, i) => {
-        doc
-          .font(FONTS.bold)
-          .fontSize(9)
-          .fillColor(BRAND.white)
-          .text(sanitizeText(header), PAGE.marginLeft + i * colWidth + cellPad, y + 6, {
-            width: colWidth - cellPad * 2,
-            align: "left",
+      // Compute the height a row needs to render its longest cell content
+      const computeRowHeight = (cells, font) => {
+        doc.font(font).fontSize(fontSize);
+        let maxTextH = 0;
+        cells.forEach((cell) => {
+          const h = doc.heightOfString(sanitizeText(cell || ""), {
+            width: cellWidth,
+            lineGap,
           });
-      });
-      y += rowHeight;
+          if (h > maxTextH) maxTextH = h;
+        });
+        return Math.max(minRowHeight, maxTextH + cellPad * 2);
+      };
 
-      // Data rows
-      tableRows.forEach((row, rowIdx) => {
-        if (rowIdx % 2 === 0) {
-          doc.save().rect(PAGE.marginLeft, y, pageWidth, rowHeight).fill(BRAND.tableStripeBg);
+      // Draw a single row at current doc.y, advance doc.y by `height`
+      const drawRow = (cells, height, font, textColor, bgColor) => {
+        const rowY = doc.y;
+        if (bgColor) {
+          doc.save().rect(PAGE.marginLeft, rowY, pageWidth, height).fill(bgColor);
           doc.restore();
         }
-        row.forEach((cell, i) => {
+        cells.forEach((cell, i) => {
           doc
-            .font(FONTS.regular)
-            .fontSize(9)
-            .fillColor(BRAND.textDark)
-            .text(sanitizeText(cell), PAGE.marginLeft + i * colWidth + cellPad, y + 6, {
-              width: colWidth - cellPad * 2,
+            .font(font)
+            .fontSize(fontSize)
+            .fillColor(textColor)
+            .text(sanitizeText(cell || ""), PAGE.marginLeft + i * colWidth + cellPad, rowY + cellPad, {
+              width: cellWidth,
               align: "left",
+              lineGap,
             });
         });
-        y += rowHeight;
+        // Force doc.y to row bottom (pdfkit's text() sets it to wherever text ended)
+        doc.y = rowY + height;
+      };
+
+      const headerHeight = computeRowHeight(tableHeaders, FONTS.bold);
+      const rowHeights = tableRows.map((row) => computeRowHeight(row, FONTS.regular));
+
+      // Ensure header + first data row fit together (avoid orphaned header at page bottom)
+      ensureSpace(headerHeight + (rowHeights[0] || minRowHeight) + 10);
+
+      let segmentStartY = doc.y;
+      drawRow(tableHeaders, headerHeight, FONTS.bold, BRAND.white, BRAND.tableHeaderBg);
+
+      tableRows.forEach((row, rowIdx) => {
+        const rowH = rowHeights[rowIdx];
+        // Per-row pagination: if this row won't fit, close current segment and start a new page
+        if (doc.y + rowH > doc.page.height - PAGE.marginBottom - 20) {
+          doc
+            .save()
+            .rect(PAGE.marginLeft, segmentStartY, pageWidth, doc.y - segmentStartY)
+            .lineWidth(0.5)
+            .strokeColor(BRAND.tableBorder)
+            .stroke()
+            .restore();
+          doc.addPage();
+          segmentStartY = doc.y;
+          // Repeat header on the new page so columns stay readable
+          drawRow(tableHeaders, headerHeight, FONTS.bold, BRAND.white, BRAND.tableHeaderBg);
+        }
+        const stripe = rowIdx % 2 === 0 ? BRAND.tableStripeBg : null;
+        drawRow(row, rowH, FONTS.regular, BRAND.textDark, stripe);
       });
 
-      // Table border
+      // Final segment border
       doc
         .save()
-        .rect(PAGE.marginLeft, doc.y, pageWidth, y - doc.y)
+        .rect(PAGE.marginLeft, segmentStartY, pageWidth, doc.y - segmentStartY)
         .lineWidth(0.5)
         .strokeColor(BRAND.tableBorder)
-        .stroke();
-      doc.restore();
+        .stroke()
+        .restore();
 
-      doc.y = y + 10;
+      // Reset cursor to left margin — last cell's text() left doc.x deep into the row,
+      // which would shrink the width budget for the next element (e.g. an h2 heading).
+      doc.x = PAGE.marginLeft;
+      doc.y += 10;
       tableHeaders = [];
       tableRows = [];
     };
@@ -351,8 +386,11 @@ const convertMarkdownToPDF = (markdown, opts = {}) => {
       }
 
       // ── Tables ──
+      // markdown-it splits each <th>/<td> onto its own line, so accumulate cells per <tr>
       if (line.startsWith("<table>")) {
         inTable = true;
+        inTableHeader = false;
+        currentRow = [];
         tableHeaders = [];
         tableRows = [];
         return;
@@ -363,21 +401,35 @@ const convertMarkdownToPDF = (markdown, opts = {}) => {
         return;
       }
       if (inTable) {
-        if (line.includes("<th>")) {
-          tableHeaders = line
-            .replace(/<\/?tr>/g, "")
-            .replace(/<\/?thead>/g, "")
-            .split(/<\/?th>/)
-            .filter((s) => s.trim() && !s.match(/^<\/?/))
-            .map((s) => s.replace(/<[^>]*>/g, "").trim());
-        } else if (line.includes("<td>")) {
-          const cells = line
-            .replace(/<\/?tr>/g, "")
-            .replace(/<\/?tbody>/g, "")
-            .split(/<\/?td>/)
-            .filter((s) => s.trim() && !s.match(/^<\/?/))
-            .map((s) => s.replace(/<[^>]*>/g, "").trim());
-          if (cells.length) tableRows.push(cells);
+        if (line === "<thead>") {
+          inTableHeader = true;
+          return;
+        }
+        if (line === "</thead>") {
+          inTableHeader = false;
+          return;
+        }
+        if (line === "<tbody>" || line === "</tbody>") return;
+        if (line === "<tr>") {
+          currentRow = [];
+          return;
+        }
+        if (line === "</tr>") {
+          if (currentRow.length > 0) {
+            if (inTableHeader) tableHeaders = currentRow;
+            else tableRows.push(currentRow);
+          }
+          currentRow = [];
+          return;
+        }
+        if (/^<(th|td)[> ]/.test(line)) {
+          // Handles one-per-line (markdown-it default) AND multiple cells on one line (defensive)
+          const matches = line.match(/<(?:th|td)[^>]*>([\s\S]*?)<\/(?:th|td)>/gi) || [];
+          for (const m of matches) {
+            const text = m.replace(/<\/?(th|td)[^>]*>/g, "").replace(/<[^>]*>/g, "").trim();
+            currentRow.push(text);
+          }
+          return;
         }
         return;
       }
