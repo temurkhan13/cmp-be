@@ -54,6 +54,12 @@ router.get(
   validate(validation.downloadAssessmentReport),
   controller.downloadAssessmentReport
 );
+router.post(
+  "/:workspaceAssessmentId/report/regenerate",
+  auth(),
+  validate(validation.regenerateAssessmentReport),
+  controller.regenerateAssessmentReport
+);
 
 module.exports = {
   workspaceAssessments: router,

@@ -634,6 +634,130 @@ const updateAssessmentQuestion = async (workspaceAssessmentId, qaId, { question 
   return { status: true, data: refreshed };
 };
 
+const cleanupRAGForAssessment = async (assessmentId) => {
+  try {
+    const filename = `assessment-report-${assessmentId}`;
+    const { data: docs } = await supabase
+      .from("documents")
+      .select("id")
+      .eq("filename", filename);
+    if (docs && docs.length > 0) {
+      const ids = docs.map((d) => d.id);
+      await supabase.from("document_chunks").delete().in("document_id", ids);
+      await supabase.from("documents").delete().in("id", ids);
+    }
+  } catch (e) {
+    logger.info(`RAG cleanup skipped for ${assessmentId}: ${e.message}`);
+  }
+};
+
+const regenerateAssessmentReport = async (assessmentId) => {
+  const assessment = await getWorkspaceAssessmentById(assessmentId);
+  if (!assessment) return handleStatus(false, "Workspace assessment not found");
+  if (assessment.status !== "completed") {
+    return handleStatus(false, "Cannot regenerate — assessment is not completed yet");
+  }
+
+  const { data: qaHistory } = await supabase
+    .from("assessment_qa")
+    .select()
+    .eq("assessment_id", assessmentId)
+    .order("created_at");
+  const history = ["", ...(qaHistory || []).flatMap((q) => [q.question, q.answer || ""])];
+
+  const { data: bizInfo } = await supabase
+    .from("folder_business_info")
+    .select("*")
+    .eq("folder_id", assessment.folder_id)
+    .maybeSingle();
+  const businessInfoStr = bizInfo
+    ? `Company: ${bizInfo.company_name || ""}, Size: ${bizInfo.company_size || ""}, Industry: ${bizInfo.industry || ""}, Role: ${bizInfo.job_title || ""}`
+    : "";
+
+  let priorAssessmentContext = "";
+  try {
+    const { data: otherAssessments } = await supabase
+      .from("workspace_assessments")
+      .select("id, name, status")
+      .eq("folder_id", assessment.folder_id)
+      .eq("status", "completed")
+      .neq("id", assessmentId)
+      .limit(5);
+    if (otherAssessments && otherAssessments.length > 0) {
+      const summaries = [];
+      for (const oa of otherAssessments) {
+        const { data: report } = await supabase
+          .from("assessment_reports")
+          .select("content")
+          .eq("assessment_id", oa.id)
+          .maybeSingle();
+        if (report?.content) {
+          summaries.push(`[${oa.name}]: ${report.content.substring(0, 500)}`);
+        }
+      }
+      if (summaries.length > 0) {
+        priorAssessmentContext =
+          "Context from prior completed assessments:\n" + summaries.join("\n\n");
+      }
+    }
+  } catch (e) {
+    logger.info("Prior assessment context fetch skipped:", e.message);
+  }
+
+  // Explicit regen instruction — empty message would trigger AI's "ask first question" default
+  const regenMessage =
+    "All assessment questions have been answered. Please generate the complete final report now in markdown format. " +
+    "Start with '## ' followed by the report title, and include all standard report sections in detail " +
+    "(executive summary, findings, recommendations, etc.). Use the conversation history above as input.";
+
+  const aiPayload = {
+    userId: assessment.user_id,
+    chat_id: assessment.folder_id,
+    message: regenMessage,
+    history,
+    general_info: priorAssessmentContext,
+    business_info: businessInfoStr,
+    assessment_name: assessment.name,
+  };
+
+  const aiResponse = await requestQuestionOrReportFromAI(aiPayload);
+  if (!aiResponse.status) return handleStatus(false, "AI service unavailable — please try again");
+  const { data: aiData } = aiResponse;
+  if (!aiData?.message) return handleStatus(false, "AI returned empty response — please try again");
+  if (!isMarkdownDetected(aiData.message)) {
+    return handleStatus(
+      false,
+      "Could not regenerate — AI did not return a complete report. Please try again."
+    );
+  }
+
+  await supabase.from("assessment_reports").upsert(
+    {
+      assessment_id: assessmentId,
+      is_generated: true,
+      title: aiData.title || assessment.name || "Report Title",
+      content: aiData.message,
+      generated_at: new Date(),
+    },
+    { onConflict: "assessment_id" }
+  );
+  await supabase
+    .from("workspace_assessments")
+    .update({ status: "completed" })
+    .eq("id", assessmentId);
+
+  await cleanupRAGForAssessment(assessmentId);
+  ingestToRAG(
+    assessment.user_id,
+    assessment.folder_id,
+    `assessment-report-${assessmentId}`,
+    `Assessment Report: ${assessment.name}\n\n${aiData.message}`
+  );
+
+  const refreshed = await getWorkspaceAssessmentById(assessmentId);
+  return { status: true, data: refreshed, message: "Report regenerated successfully" };
+};
+
 module.exports = {
   createWorkspaceAssessment,
   queryWorkspaceAssessments,
@@ -645,4 +769,5 @@ module.exports = {
   updateAssessmentQuestion,
   updateAssessmentReport,
   downloadAssessmentReport,
+  regenerateAssessmentReport,
 };

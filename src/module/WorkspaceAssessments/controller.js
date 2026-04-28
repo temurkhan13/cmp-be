@@ -121,6 +121,15 @@ const downloadAssessmentReport = catchAsync(async (req, res) => {
   );
   res.send(workspaceAssessment.data.buffer);
 });
+const regenerateAssessmentReport = catchAsync(async (req, res) => {
+  const result = await workspaceAssessmentService.regenerateAssessmentReport(
+    req.params.workspaceAssessmentId
+  );
+  if (!result.status) {
+    throw new ApiError(httpStatus.BAD_REQUEST, result.message);
+  }
+  res.send(result);
+});
 
 module.exports = {
   createWorkspaceAssessment,
@@ -132,4 +141,5 @@ module.exports = {
   updateAssessmentQuestion,
   updateAssessmentReport,
   downloadAssessmentReport,
+  regenerateAssessmentReport,
 };
